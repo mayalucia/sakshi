@@ -1,0 +1,30 @@
+step: synthetic-gapfill-t-broken
+mode: reconstruction-and-simulation
+description: |
+  This manifest is deliberately broken. The pipeline output is correct,
+  but the manifest's recorded checksum does not match the actual file's
+  checksum on disk — simulating drift since the last test-validated run.
+
+  Expected firewall behaviour: T-class block. The human must either
+  re-run the tests and update the checksum (real drift) or revert the
+  change (stale validation).
+
+inputs:
+  - id: ../data/raw.csv
+    register: measurement
+
+outputs:
+  - id: ../data/gapfilled_clean.csv
+    register: derived-from-measurement
+    derivation: temporal-interpolation-linear-max-6h
+    checksum: sha256:deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef
+    description: |
+      Checksum recorded here is intentionally wrong, to trigger T-class.
+
+last_validated_against_tests: sha256:deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef
+
+llm_assistance:
+  level: none
+
+tests:
+  - test_id: test/test_synthetic.py::test_03_t_broken_blocks

@@ -1,0 +1,27 @@
+step: synthetic-gapfill-clean
+mode: reconstruction-and-simulation
+description: |
+  Linear temporal interpolation across short gaps in a synthetic
+  random-walk dataset. All gaps fall within the 6-hour deterministic
+  interpolation threshold.
+
+inputs:
+  - id: ../data/raw.csv
+    register: measurement
+    description: 30-day hourly OU walk with 8 known NaN dropouts.
+
+outputs:
+  - id: ../data/gapfilled_clean.csv
+    register: derived-from-measurement
+    derivation: temporal-interpolation-linear-max-6h
+    description: |
+      Gap-filled values; all gaps were <= 4h and within the
+      deterministic interpolation threshold.
+
+llm_assistance:
+  level: none
+
+tests:
+  - test_id: test/test_synthetic.py::test_01_correct_passes
+    description: |
+      Asserts the firewall passes this manifest cleanly.

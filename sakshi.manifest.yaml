@@ -1,0 +1,135 @@
+step: sakshi-build-v0.1
+mode: reconstruction-and-simulation
+description: |
+  sakshi's own build pipeline, described in sakshi's own manifest
+  format. The org files in codev/ are the source-of-truth (register:
+  measurement). The Python files in src/sakshi/ and test/ are
+  tangled outputs (register: derived-from-measurement) produced by
+  org-babel-tangle.
+
+  This manifest is discovered by sakshi's own pytest plugin and
+  validated as part of `pytest test/test_dogfood.py`.
+
+inputs:
+  - id: codev/doctrine.org
+    register: measurement
+    description: |
+      The doctrinal document. Source-of-truth for the four-register
+      firewall and the two-mode polymorphism.
+
+  - id: codev/schema.org
+    register: measurement
+    description: |
+      The pydantic manifest schema, literate. Source-of-truth for
+      src/sakshi/schema.py.
+
+  - id: codev/firewall.org
+    register: measurement
+    description: |
+      The firewall and pytest plugin, literate. Source-of-truth for
+      src/sakshi/firewall.py, src/sakshi/pytest_plugin.py,
+      src/sakshi/checksum.py, and src/sakshi/__init__.py.
+
+  - id: codev/examples/synthetic.org
+    register: measurement
+    description: |
+      The synthetic worked example, literate. Source-of-truth for
+      test/test_synthetic.py and test/synthetic/.
+
+  - id: codev/examples/imis.org
+    register: measurement
+    description: |
+      The IMIS worked example, literate. Source-of-truth for
+      test/test_imis.py, test/imis/, and data/imis-cached/README.md.
+
+  - id: codev/dogfood.org
+    register: measurement
+    description: |
+      This file. Source-of-truth for sakshi.manifest.yaml and
+      test/test_dogfood.py.
+
+  - id: codev/extension.org
+    register: measurement
+    description: |
+      The extension guide.
+
+  - id: codev/roadmap-v0.2.org
+    register: measurement
+    description: |
+      The v0.2 fold-in roadmap.
+
+outputs:
+  - id: src/sakshi/schema.py
+    register: derived-from-measurement
+    derivation: org-babel-tangle-from-codev-schema-org
+
+  - id: src/sakshi/firewall.py
+    register: derived-from-measurement
+    derivation: org-babel-tangle-from-codev-firewall-org
+
+  - id: src/sakshi/pytest_plugin.py
+    register: derived-from-measurement
+    derivation: org-babel-tangle-from-codev-firewall-org
+
+  - id: src/sakshi/checksum.py
+    register: derived-from-measurement
+    derivation: org-babel-tangle-from-codev-firewall-org
+
+  - id: src/sakshi/__init__.py
+    register: derived-from-measurement
+    derivation: org-babel-tangle-from-codev-firewall-org
+
+  - id: test/test_synthetic.py
+    register: derived-from-measurement
+    derivation: org-babel-tangle-from-codev-examples-synthetic-org
+
+  - id: test/test_imis.py
+    register: derived-from-measurement
+    derivation: org-babel-tangle-from-codev-examples-imis-org
+
+  - id: test/test_dogfood.py
+    register: derived-from-measurement
+    derivation: org-babel-tangle-from-codev-dogfood-org
+
+llm_assistance:
+  level: llm-authored-human-reviewed
+  model: claude-opus-4-6
+  reviewer: mu2tau
+  notes: |
+    sakshi v0.1's org content was authored in a single focused build
+    session by griot (Claude Opus 4 under the le-comptoir commission)
+    under direction and review by mu2tau (the human collaborator). The
+    architecture, the doctrine framing, and the forward-compat
+    discipline were finalised through consultation with dhara@parbati
+    (substrate context, naming) and mayadev@mayalucia (architectural
+    placement, B/T/M taxonomy, forward-compat audit-in-build
+    discipline). All review traces are in the commission's session
+    transcripts. The tangled Python files are derived deterministically
+    from the org sources via org-babel-tangle.
+
+tests:
+  - test_id: test/test_dogfood.py::test_manifest_loads
+    description: |
+      Asserts that the manifest itself parses cleanly under sakshi's
+      own schema. If sakshi cannot describe its own build, the schema
+      is wrong.
+
+  - test_id: test/test_dogfood.py::test_all_inputs_exist
+    description: |
+      Asserts that every input file declared in the manifest exists
+      on disk at the declared path.
+
+  - test_id: test/test_dogfood.py::test_all_outputs_exist
+    description: |
+      Asserts that every output file declared in the manifest exists
+      on disk at the declared path. If an org file says it tangles to
+      a path, that path must be present after tangle.
+
+  - test_id: test/test_dogfood.py::test_no_silent_extras
+    description: |
+      Asserts that the src/sakshi/ directory contains no .py files
+      beyond what the manifest declares as outputs. Catches the case
+      where a developer adds a Python file directly without back-port
+      to org — silent demotion of the source-of-truth rule.
+
+author: mu2tau

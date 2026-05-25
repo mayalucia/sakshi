@@ -1,0 +1,31 @@
+step: imis-raw-import-wfj-flu-2024-02
+mode: reconstruction-and-simulation
+description: |
+  Import the raw two-station IMIS air-temperature snapshot (synthetic
+  surrogate in v0.1; real cached snapshot in v0.2 if institutional
+  permission is obtained). No transformation; the output is the same
+  data normalised into a typed pandas DataFrame.
+
+inputs:
+  - id: ../data/imis_wfj_flu_2024-02.csv
+    register: measurement
+    description: |
+      48 hourly air-temperature readings from two IMIS stations (WFJ
+      Weissfluhjoch and FLU Davos Flueela), with QC flags. Synthetic
+      surrogate following the IMIS schema.
+
+outputs:
+  - id: imported_imis.parquet
+    register: measurement
+    description: |
+      The same data, typed and partitioned by station, as parquet. No
+      computation applied beyond schema enforcement.
+
+llm_assistance:
+  level: none
+
+tests:
+  - test_id: test/test_imis.py::test_01_raw_import
+    description: |
+      Asserts that the import preserves measurement values bit-for-bit
+      where qc_flag != 9, and preserves NaN positions where qc_flag == 9.

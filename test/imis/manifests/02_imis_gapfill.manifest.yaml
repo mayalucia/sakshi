@@ -1,0 +1,54 @@
+step: imis-gapfill-wfj-flu-2024-02
+mode: reconstruction-and-simulation
+description: |
+  Gap-fill the imported IMIS air-temperature data. Short gaps (<= 6
+  hours) are filled by deterministic linear interpolation; longer gaps
+  are filled by a per-hour climatological imputer (a learned model that
+  for the purposes of this example is a per-hour cyclic mean).
+
+  Two registers are produced: most filled values are
+  derived-from-measurement; the longer-gap fills are
+  synthetic-acknowledged. The column-level register is the compound
+  of both, and a per-row flag column distinguishes them.
+
+inputs:
+  - id: imported_imis.parquet
+    register: measurement
+    description: Output of step imis-raw-import-wfj-flu-2024-02.
+
+outputs:
+  - id: gapfilled_imis.parquet
+    register:
+      - derived-from-measurement
+      - synthetic-acknowledged
+    derivation: linear-temporal-interpolation-max-6h
+    synthesis: per-hour-climatological-imputer-for-gaps-over-6h
+    description: |
+      Gap-filled IMIS data with a per-row 'fill_flag' column:
+        0 = original measurement
+        1 = derived-from-measurement (interpolated, <= 6h)
+        2 = synthetic-acknowledged (imputed by climatological model)
+
+llm_assistance:
+  level: pair-programmed
+  model: claude-opus-4-6
+  reviewer: i.iosifescu
+  notes: |
+    The interpolation logic and the climatological imputer were drafted
+    in a pair-programming session and reviewed before commit. Compound
+    register and per-row fill_flag were specified by the reviewer
+    before any code was written.
+
+tests:
+  - test_id: test/test_imis.py::test_02_gapfill_register_coherence
+    description: |
+      Asserts that every row in the output is one of:
+      - identical to the input (fill_flag=0)
+      - within the interpolation threshold of its neighbours (fill_flag=1)
+      - matches the climatological imputer output (fill_flag=2)
+      And that no row that was originally measurement has been silently
+      overwritten.
+  - test_id: test/test_imis.py::test_02_gapfill_no_silent_demotion
+    description: |
+      Asserts that the set of original-measurement positions
+      (qc_flag=0 in raw) is preserved bit-for-bit in the output.

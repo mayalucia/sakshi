@@ -1,0 +1,280 @@
+#+title: sakshi — v0.2 Roadmap
+#+subtitle: The named fold-in into dmt-eval (Layer 1) and aikosh (Layer 2)
+#+author: sakshi v0.1
+#+startup: showall
+
+* What v0.2 is
+
+v0.2 is the planned migration of sakshi's enforcement layer into the
+substrate modules it would naturally live within: the *pytest
+firewall* into ~dmt-eval~ as a test-plugin domain, and the *pydantic
+manifest schema* into ~aikosh~ as a schema kind.
+
+The *doctrine* (~codev/doctrine.org~) stays in sakshi. The discipline
+itself is substrate-neutral; only its implementation hosts move.
+
+This document does three things:
+
+1. Restates /why/ v0.1 is standalone and v0.2 is the fold-in.
+2. Specifies the *contracts the substrates need to expose* for the
+   fold-in to be a refactor and not a redesign.
+3. Names the *trigger conditions* — what must be true of
+   ~dmt-eval~ and ~aikosh~ before v0.2 work begins.
+
+This is not a private design note. It is published in the README and
+mentioned in messages to the substrate guardians, because it is the
+right cross-spirit coordination signal: sakshi has a fold-in waiting,
+and the substrates can shape their contracts knowing this consumer
+exists.
+
+* Why standalone first
+
+A discipline-layer can only be honest if its implementation is robust.
+v0.1's substrates were not yet robust enough to host sakshi's checks
+without sakshi inheriting their churn. The diagnostic check, run on
+2026-05-25:
+
+** dmt-eval
+
+The current ~dmt-eval/CLAUDE.md~ describes a Three-Party Architecture
+with ~interface.py~ defining Protocol-based contracts, ~adapter.py~
+with an ~@dmt.adapter~ decorator and per-interface ~PluginRegistry~,
+and ~__init_subclass__~-driven plugin discovery. The aspirational
+architecture is sound.
+
+The current ~src/dmt/~ contains a single domain-coupled
+~WeatherAdapter~ Protocol (no decorator, no registry), an
+~evaluate.py~ that is a 367-line single function with hard-coded
+~Scenario~ dataclasses for ~WEATHER~, ~DRUG_EFFICACY~, and
+~EQUITY_FORECAST~, no ~interface.py~, no ~verdict.py~, no
+~dataset.py~. The package version is ~0.0.1~. Recent commit energy is
+in ~brain-score~ comparison work (WP-0069) — themis is mid-design.
+
+Hosting sakshi's firewall as a ~dmt-eval~ test-plugin domain right
+now would couple sakshi to whatever shape the plugin contract takes
+as themis lands WP-0069. The shape is in motion. The cheap-insurance
+call mayadev made in their 2026-05-25 note vindicated itself.
+
+** aikosh
+
+The current ~aikosh/system.md~ describes the pipeline source →
+validate → distill → schema-check → index → query, with a plugin
+registry, genus → species → instance hierarchy, and an associative
+smriti layer.
+
+The current ~src/aikosh/schema.py~, ~validate.py~, ~distill.py~,
+~query.py~ are all docstring-only stubs. Recent implementation energy
+is in the ~observe/~ subsystem (s-expression parser, SQLite store,
+CLI) — vannevar is building observation-memory machinery, which is a
+different concern from the knowledge-collection schema layer that
+would host sakshi's manifest.
+
+Same situation as dmt-eval: hosting now would couple sakshi to a
+shape still being formed.
+
+** The standalone-first decision
+
+v0.1 ships standalone with ~pydantic~ and ~pytest~ as load-bearing
+dependencies. Cost: ~sakshi~ has its own (small) machinery that will
+eventually be redundant. Benefit: ~sakshi~'s discipline is testable
+today, citable today, and not blocked on substrate stabilisation.
+
+The cost is paid down by v0.2's fold-in. The discipline of v0.1 — the
+~@forward-compat~ mirror-comments on every field and every hook —
+exists to make the fold-in cheap when the substrates are ready.
+
+* The contracts sakshi anticipates
+
+This section enumerates what ~dmt-eval~ and ~aikosh~ would need to
+expose for the v0.2 fold-in to be a refactor of plumbing rather than
+a redesign of doctrine. It is written as a *feature request* against
+the substrates, addressed to themis (dmt-eval guardian) and vannevar
+(aikosh guardian), with the understanding that the substrates have
+their own design priorities and may shape these contracts differently.
+
+The named field-names and hook-names are *anticipated*, not
+prescribed. The shape of what is needed is what matters.
+
+** dmt-eval test-plugin domain contract
+
+sakshi's firewall would become a ~dmt-eval~ test-plugin domain named
+~sakshi-firewall~. The contract sakshi anticipates:
+
+1. *A way to register a domain*. Annotation or decorator that names
+   the domain (~"sakshi-firewall"~) and binds it to a set of checks.
+
+2. *A way to register checks within the domain*. Each check is a
+   callable that takes a target (typically a manifest, but in dmt-eval
+   vocabulary something more general — a "subject") and returns a
+   Verdict.
+
+3. *A Verdict type with a Severity field*. sakshi's ~FailureClass~
+   (B/T/M) would map onto ~Verdict.Severity~ values. The mapping
+   needs to be expressible: either B/T/M as native Severity values,
+   or as labelled subclasses of a more general severity type.
+
+4. *A way to discover targets*. sakshi discovers manifests via glob
+   patterns. dmt-eval's test-plugin discovery would need to expose a
+   hook that domains can register glob patterns or path resolvers
+   against.
+
+5. *A pytest integration shim*. sakshi v0.1 ships a pytest plugin
+   directly; v0.2's sakshi would defer to dmt-eval's pytest
+   integration, which collects targets from all registered domains
+   and runs each domain's checks as pytest items.
+
+The ~@forward-compat~ mirror-comments in ~codev/firewall.org~ already
+name each hook against this anticipated contract. When dmt-eval's
+contract solidifies, the renaming pass is mechanical.
+
+** aikosh schema-kind contract
+
+sakshi's ~Manifest~, ~Input~, ~Output~, ~LlmAssistance~, and
+~TestReference~ would become ~aikosh~ schema kinds. The contract
+sakshi anticipates:
+
+1. *A way to declare a schema kind*. The kind's name
+   (~provenance-manifest~), its pydantic model class, and its
+   relationships to other kinds (e.g.,
+   ~provenance-manifest-output~ is referenced from
+   ~provenance-manifest.outputs~).
+
+2. *A way to validate an instance against its kind*. v0.1 uses
+   pydantic's own validation. v0.2 would defer to aikosh's
+   ~validate.py~ layer, which presumably wraps pydantic plus
+   aikosh-specific cross-kind invariants (e.g., aikosh-id resolution).
+
+3. *aikosh-id resolution*. Several manifest fields (~input.id~,
+   ~output.id~, ~step~, ~author~, ~llm_assistance.reviewer~,
+   ~test_reference.test_id~) are anticipated to become
+   aikosh-resolvable identifiers. The fold-in would require aikosh
+   to expose a way for a schema kind to declare that a field is an
+   aikosh-id reference and to participate in aikosh's lookup
+   semantics.
+
+4. *Index registration*. Once the manifest is an aikosh schema kind,
+   the existing manifests in a repository become aikosh-indexable
+   knowledge. Cross-step invariants (output of step A matches input
+   of step B, including register compatibility) become aikosh
+   queries, replacing the v0.1 limitation that sakshi can only check
+   one manifest at a time.
+
+The ~@forward-compat~ mirror-comments in ~codev/schema.org~ already
+name each field against this anticipated contract.
+
+* Trigger conditions for v0.2 work
+
+v0.2 work begins when *both* substrates have reached the maturity at
+which their relevant contracts are stable enough to host sakshi.
+"Stable enough" means:
+
+1. The contract has been used by at least one other domain (for
+   dmt-eval) or kind (for aikosh) beyond the substrate's own
+   demonstrators. Hosting sakshi as the second consumer is the
+   right shape; hosting sakshi as the first is too risky for
+   sakshi's downstream readers (the discipline document loses
+   credibility if the substrate changes shape mid-fold).
+
+2. The contract has a version pin available. sakshi's v0.2
+   ~pyproject.toml~ will pin against specific substrate versions; the
+   substrate versions need to be release-tagged.
+
+3. The substrate's guardian (themis for dmt-eval, vannevar for
+   aikosh) has signalled readiness. The signal is informal — a
+   message to the sūtra is sufficient, or an explicit mention in the
+   substrate's own roadmap.
+
+These conditions are likely to be met for one substrate before the
+other. Partial fold-ins are acceptable: v0.2a could be the
+dmt-eval fold of Layer 1 with the manifest schema still standalone;
+v0.2b could be the aikosh fold of Layer 2. The doctrine and the
+forward-compat discipline are designed to make either order valid.
+
+* Migration mechanics
+
+When v0.2 work begins, the fold-in is a *refactor*, not a redesign.
+The expected change set, per layer:
+
+** Layer 1 fold-in (firewall → dmt-eval test-plugin domain)
+
+1. Replace ~src/sakshi/pytest_plugin.py~ with a domain registration
+   call against dmt-eval.
+2. Rewrite the ~check_*~ functions in ~src/sakshi/firewall.py~ as
+   dmt-eval domain checks (signature and return-type changes).
+3. Replace ~FirewallFailure~ with a dmt-eval ~Verdict~ subclass.
+4. Move ~src/sakshi/checksum.py~ into the dmt-eval utilities, or keep
+   it in sakshi as a sakshi-specific helper.
+5. Update ~pyproject.toml~ to remove the pytest entry-point and depend
+   on dmt-eval.
+6. Update ~test/test_dogfood.py~ to call dmt-eval's runner instead of
+   pytest directly (or keep pytest as a transport for dmt-eval, if
+   that's the architecture dmt-eval lands on).
+
+The doctrine document (~codev/doctrine.org~) does not change. The
+schema document (~codev/schema.org~) does not change. The worked
+examples (~codev/examples/*.org~) need their manifests' ~tests:~
+entries updated to reference dmt-eval verdict IDs instead of pytest
+node IDs.
+
+** Layer 2 fold-in (schema → aikosh schema kind)
+
+1. Replace ~src/sakshi/schema.py~ with an aikosh schema-kind
+   registration (the pydantic class becomes the model; aikosh wraps
+   it with its own validation and id-resolution layers).
+2. Identify which manifest fields become aikosh-id references and
+   update the schema accordingly.
+3. Remove the duplicate validation logic from
+   ~_check_doctrine~ that aikosh's cross-kind validation now
+   handles; keep what is sakshi-specific.
+4. Update ~pyproject.toml~ to depend on aikosh.
+
+The doctrine document does not change. The firewall continues to use
+the schema; only the schema's host has moved.
+
+** Layer 3 (doctrine)
+
+Stays in sakshi.
+
+* What v0.2 deliberately does not include
+
+- *A compliance reporting tool*. The fail-fast-and-inform discipline
+  remains; if a report is needed for external review, generate it
+  from the manifests with a separate tool.
+- *A graphical UI*. Discipline lives in the build, not in a
+  dashboard.
+- *Automatic manifest generation from code*. There has been internal
+  discussion about a decorator-based API (~@sakshi.manifest(...)~ on
+  pipeline functions) that auto-generates manifest entries. This is
+  v0.3 territory at earliest. v0.2 keeps manifests as the
+  human-authored declaration they are.
+- *Bidirectional dataflow validation*. v0.2's aikosh fold-in
+  enables cross-manifest invariants; bidirectional validation
+  (i.e., comparing manifest-declared outputs against
+  manifest-declared inputs of downstream steps for consistency) is
+  v0.3 territory. The infrastructure for it exists in aikosh by
+  then; the work is in writing the check.
+
+* Cross-spirit coordination signals (current state)
+
+This document is the formal signal to themis and vannevar that
+sakshi exists, has a fold-in waiting, and has done the contract-
+mirroring discipline that makes the fold-in cheap when their
+substrates are ready.
+
+Status as of v0.1 publication (2026-05):
+
+- themis: pre-signal. No formal communication yet. themis is mid-
+  design on WP-0069 Brain-Score architectural comparison, which is
+  the work that will shape dmt-eval's test-plugin contract. The
+  right moment for the formal signal is when WP-0069 is closed or
+  its design is stable.
+- vannevar: pre-signal. No formal communication yet. vannevar's
+  current implementation focus is the ~observe/~ subsystem, which
+  is upstream of the schema layer that would host sakshi's
+  manifest.
+
+This roadmap document is the README-level signal. Direct
+spirit-to-spirit messages are deferred until the substrates' shape
+is closer to stable, to avoid premature constraint.
+
+* End of file

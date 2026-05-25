@@ -1,0 +1,33 @@
+step: synthetic-stylised-plot-faithful
+mode: expression
+description: |
+  A stylised plot whose pixel values nevertheless faithfully encode the
+  original measurement values (no smoothing, no rescaling beyond a
+  declared linear remap to display units). The output is in
+  expression-mode (its purpose is communication), but it carries the
+  compound register 'derived-from-measurement | expression-mode' because
+  the data shown is recoverable from the measurements via a declared
+  remap.
+
+  Expected firewall behaviour: PASS. This is the trap to catch over-eager
+  rejection of the unusual compound.
+
+inputs:
+  - id: ../data/raw.csv
+    register: measurement
+
+outputs:
+  - id: stylised_faithful_plot.png
+    register:
+      - derived-from-measurement
+      - expression-mode
+    derivation: linear-remap-to-display-units
+    description: |
+      Faithful stylised plot; pixel positions encode (timestamp, value)
+      via a declared linear remap.
+
+llm_assistance:
+  level: none
+
+tests:
+  - test_id: test/test_synthetic.py::test_05_false_positive_trap_passes

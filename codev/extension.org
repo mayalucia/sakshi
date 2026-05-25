@@ -1,0 +1,282 @@
+#+title: sakshi — Extension Guide
+#+subtitle: How to add a check for a new register, mode, or domain-specific invariant
+#+author: sakshi v0.1
+#+property: header-args:python :mkdirp yes
+#+startup: showall
+
+* When to extend, and when not to
+
+sakshi's v0.1 vocabulary is deliberately small: four registers, two
+modes, three failure classes. The doctrine argues that this vocabulary
+is /sufficient/ for the failure cases that matter in LLM-assisted
+environmental-data work.
+
+Before extending, the question to ask is: /does the case I want to
+catch require new vocabulary, or does it fit the existing vocabulary
+with a compound register?/
+
+Most cases fit with a compound. Some examples that have come up:
+
+- "We need to flag values that were calibrated from a sensor reading
+  using a per-station offset." → ~derived-from-measurement~. The
+  per-station offset is the derivation.
+
+- "We need to flag values that are sensor readings, but with known
+  contamination from instrument drift." → ~measurement~ remains the
+  right register; the contamination should be a separate column or a
+  separate manifest output, not a different register.
+
+- "We need to handle outputs that are partly synthetic and partly
+  real, where the synthetic parts are unbiased estimates trained on
+  the real parts." → ~derived-from-measurement |
+  synthetic-acknowledged~. Compound. The synthesis field names the
+  estimator. The compound makes clear to downstream consumers that
+  the column has a generative component.
+
+If, after considering compound registers, your case genuinely requires
+something new — a new register, a new mode, or a new domain-specific
+check — this guide is for you.
+
+The bar is high. Adding to the vocabulary affects every downstream
+consumer of the doctrine, and every existing manifest must remain
+valid (or be migrated). The B/T/M classes are unlikely to need
+extension. The registers and modes are extensible but cautiously so.
+
+* Extension type 1 — a new domain-specific check
+
+The most common kind of extension. You have a domain (clinical trials,
+EO satellite retrievals, financial-time-series modelling) with
+invariants the v0.1 doctrine does not express. The pytest plugin's
+extension hook lets you add a check that runs alongside the B/T/M
+checks.
+
+** Where it lives
+
+Domain checks live in your /own/ package, not in sakshi. sakshi is the
+substrate. You write a pytest plugin (or a pytest fixture, or just a
+test) that imports sakshi's machinery, loads manifests, and applies
+domain-specific assertions.
+
+The convention is to name your package ~sakshi_<domain>~ (e.g.,
+~sakshi_imis~, ~sakshi_clinicaltrials~). Each domain package adds its
+own pytest entry-point, alongside sakshi's.
+
+** A worked example
+
+Suppose you want a check specific to the IMIS network: any gap-filled
+column must have a per-row ~fill_flag~ column with values 0/1/2 (the
+convention from ~codev/examples/imis.org~). This is not a doctrinal
+requirement — it is an IMIS-specific convention.
+
+#+begin_src python :tangle ../test/extensions/sakshi_imis/check_fill_flag.py
+"""sakshi_imis — IMIS-specific extension checks.
+
+Adds: per-row fill_flag convention.
+
+Usage:
+    pytest --sakshi-imis-check-fill-flag
+
+This is a worked example of how to add a domain extension. In a real
+project, this file would live in its own package (sakshi_imis), not
+inside sakshi's test/ tree.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import pandas as pd
+import pytest
+
+from sakshi import FailureClass, FirewallFailure, load_manifest
+
+
+def check_imis_fill_flag(manifest_path: Path) -> None:
+    """For any IMIS gap-fill manifest, the output must have a fill_flag column.
+
+    Recognised as an IMIS gap-fill by:
+    - step name containing 'imis' and 'gapfill', OR
+    - any output with a derivation containing 'interpolation'
+    """
+    manifest = load_manifest(manifest_path)
+
+    is_imis_gapfill = (
+        "imis" in manifest.step.lower()
+        and "gapfill" in manifest.step.lower()
+    )
+    has_interpolation_derivation = any(
+        (out.derivation or "").find("interpolation") >= 0
+        for out in manifest.outputs
+    )
+    if not (is_imis_gapfill or has_interpolation_derivation):
+        return  # Not an IMIS gap-fill; nothing to check.
+
+    base = manifest_path.parent
+    for out in manifest.outputs:
+        path = base / out.id
+        if not path.exists() or path.suffix not in (".csv", ".parquet"):
+            continue
+        df = (
+            pd.read_csv(path) if path.suffix == ".csv" else pd.read_parquet(path)
+        )
+        if "fill_flag" not in df.columns:
+            raise FirewallFailure(
+                FailureClass.MISSED,
+                f"output {out.id!r} is an IMIS gap-fill product but has no "
+                f"'fill_flag' column.",
+                manifest_step=manifest.step,
+                hint="Add a 'fill_flag' column (0=original, 1=interpolated, 2=imputed).",
+            )
+        flag_values = set(df["fill_flag"].unique())
+        invalid = flag_values - {0, 1, 2}
+        if invalid:
+            raise FirewallFailure(
+                FailureClass.BLOCKING,
+                f"output {out.id!r} has fill_flag values outside the IMIS "
+                f"vocabulary {{0, 1, 2}}: {invalid}",
+                manifest_step=manifest.step,
+                hint="Map fill_flag values to the IMIS vocabulary.",
+            )
+#+end_src
+
+** Wiring the extension into pytest
+
+In your extension's package, register a pytest hook that calls the
+check after sakshi's own checks have run. The simplest form is a
+fixture-based check that the user invokes explicitly:
+
+#+begin_src python :tangle no
+# In sakshi_imis/pytest_plugin.py (not tangled — illustrative)
+import pytest
+from sakshi_imis.check_fill_flag import check_imis_fill_flag
+
+
+def pytest_addoption(parser):
+    parser.addoption(
+        "--sakshi-imis-check-fill-flag",
+        action="store_true",
+        default=False,
+    )
+
+
+@pytest.fixture
+def imis_fill_flag_check(request, sakshi_manifest_path):
+    if request.config.getoption("--sakshi-imis-check-fill-flag"):
+        check_imis_fill_flag(sakshi_manifest_path)
+#+end_src
+
+A future v0.2 sakshi will expose a richer extension API (probably via
+dmt-eval's test-plugin domain machinery, once that contract
+stabilises). v0.1's approach is intentionally bare — extensions are
+small Python packages that import sakshi and add their own checks
+through pytest's normal extension mechanisms.
+
+* Extension type 2 — a new register
+
+A new register requires changing the schema's ~Register~ enum and the
+firewall's structural checks. This is a doctrine-level change. Do not
+do it lightly.
+
+** When it might be justified
+
+A genuinely new register would be needed if you encounter a class of
+artefact whose epistemic status is /not/ captured by any combination
+of the four existing registers, even compound. Empirically this is
+rare. Examples that have come up but turned out *not* to require new
+registers:
+
+- "Measurement, but degraded by known instrumental noise." → still
+  ~measurement~ at the column level; the noise model is a separate
+  artefact in a separate manifest.
+
+- "Output of a counterfactual simulation." →
+  ~synthetic-acknowledged~. Counterfactual is what synthetic-mode
+  simulations /produce/. The compound
+  ~derived-from-measurement | synthetic-acknowledged~ handles
+  simulations that are conditioned on measurements.
+
+- "Aesthetic rendering with deliberately falsified data for
+  pedagogical clarity (e.g., a teaching diagram showing a hypothetical
+  flood)." → ~expression-mode~. The deliberateness is the point. If
+  the data is falsified for pedagogy, the artefact is
+  expression-mode; the manifest should not pretend otherwise.
+
+** If you do need one
+
+The procedure:
+
+1. Open a discussion in the project's design forum (sūtra deposit, or
+   GitHub issue) /before/ writing code. Name the register, describe
+   the class of artefact it would catch, and give two or three worked
+   examples showing why compound registers fail to cover the case.
+
+2. Add the enum value to ~codev/schema.org~ → ~Register~. Add a new
+   section to ~codev/doctrine.org~ defining the register's meaning,
+   examples, and key property.
+
+3. Add structural checks in ~Manifest._check_doctrine~ that express
+   the firewall obligations involving the new register.
+
+4. Update ~codev/examples/synthetic.org~ to include a manifest that
+   uses the new register, so the test suite covers the new case.
+
+5. Bump the schema version (this is a v0.2-class change).
+
+* Extension type 3 — a new mode
+
+Even higher bar than a new register. Modes determine the obligation
+structure of every step under that mode; adding a third mode
+implicates the entire firewall.
+
+The v0.1 doctrine argues that the two-mode polymorphism is sufficient
+because there is no third mode in which the firewall doesn't apply.
+"Exploration" was removed for that reason — it became a wildcard that
+the discipline could not hold.
+
+If you believe you have a third mode, the burden is on you to
+demonstrate that its obligation structure is /strictly different/ from
+~reconstruction-and-simulation~ and ~expression~, and that the failure
+cases the new mode catches cannot be caught by combining the existing
+modes with appropriate compound registers.
+
+This conversation is best had on the project's mailing list, not in a
+pull request.
+
+* Extension type 4 — a new failure class
+
+A new B/T/M class would be a substantial doctrinal departure. The
+existing three were chosen to match the natural decision-shape at
+build time:
+
+- B-class: stop, this is wrong.
+- T-class: stop, decide which of two things happened.
+- M-class: stop, write the missing field.
+
+Each maps to a distinct human action at build time. A fourth class
+would need a fourth human action. None has so far been needed.
+
+If you find yourself wanting to extend the failure classes, the more
+likely diagnosis is that you have an extension-type-1 case (a
+domain-specific check) whose failure messages should classify into the
+existing three.
+
+* The forward-compat discipline applies to extensions too
+
+Every new field, hook, check, or register you add through any
+extension type must carry its ~@forward-compat~ mirror-comment naming
+the anticipated substrate-host (~aikosh~ for schema additions,
+~dmt-eval~ for plugin additions). The discipline is recursive — if v0.2
+folds sakshi into the substrates, your extensions need to fold cleanly
+too.
+
+If you cannot name the substrate-host for a new addition, that is a
+signal that the addition belongs in your own package, not in sakshi.
+
+* Worked example summary
+
+The extension demonstrated in this file is type 1 (a domain-specific
+check). It lives in its own subdirectory (~test/extensions/sakshi_imis/~)
+purely so the example travels with this repository; in real use it
+would be a separate installable package.
+
+* End of file

@@ -1,0 +1,22 @@
+step: synthetic-gapfill-m-broken
+mode: reconstruction-and-simulation
+description: |
+  This manifest is deliberately broken. It is in
+  reconstruction-and-simulation mode but has no 'tests' entry.
+
+  Expected firewall behaviour: M-class block at parse-time. The
+  message must name the missing field.
+
+inputs:
+  - id: ../data/raw.csv
+    register: measurement
+
+outputs:
+  - id: ../data/gapfilled_clean.csv
+    register: derived-from-measurement
+    derivation: temporal-interpolation-linear-max-6h
+
+llm_assistance:
+  level: none
+
+tests: []

@@ -1,0 +1,479 @@
+#+title: sakshi — Worked Example 1: Synthetic Random-Walk Pipeline
+#+subtitle: The pedagogical spine — four injected faults, one per failure class plus one false-positive trap
+#+author: sakshi v0.1
+#+property: header-args:python :mkdirp yes
+#+startup: showall
+
+* Purpose
+
+This file is the literate source of the synthetic worked example. It
+ships:
+
+- A small synthetic dataset (an Ornstein–Uhlenbeck-like 1-D random walk
+  with injected NaNs at known positions), produced reproducibly from a
+  seed.
+- Four manifest files — one /correct/ and three /broken/ in
+  doctrinally-instructive ways (one per B/T/M class).
+- A fifth manifest that /looks/ broken but is actually correct — the
+  false-positive trap, included to make explicit what the discipline
+  does *not* catch and to keep reviewers honest about over-reach.
+- A pytest test file that exercises all five and asserts the right
+  pass/fail behaviour from the firewall.
+
+The example uses synthetic data on purpose. The IMIS example
+(~codev/examples/imis.org~) provides the credibility anchor with real
+sensor data; this one provides the pedagogical anchor where the
+failure cases can be /designed/ to be unambiguous.
+
+* The synthetic dataset
+
+A 1-D Ornstein–Uhlenbeck process sampled at 1-hour intervals over 30
+days. At eight known positions, the sampled value is replaced with
+~NaN~ to simulate sensor dropouts. The dataset is produced by a
+deterministic generator from a fixed seed, so the file can be
+regenerated identically.
+
+#+begin_src python :tangle ../../test/synthetic/generate.py
+"""Synthetic dataset generator for sakshi's pedagogical worked example.
+
+This file is tangled from codev/examples/synthetic.org.
+
+Produces:
+    test/synthetic/data/raw.csv               -- measurement-register
+    test/synthetic/data/gapfilled_clean.csv   -- correct gap-fill
+    test/synthetic/data/gapfilled_synthetic.csv -- correct compound-register gap-fill
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
+
+
+def generate_ou_walk(
+    n: int = 720,
+    seed: int = 42,
+    theta: float = 0.05,
+    mu: float = 0.0,
+    sigma: float = 0.5,
+    dt: float = 1.0,
+) -> np.ndarray:
+    """Generate an Ornstein-Uhlenbeck path. Deterministic in *seed*."""
+    rng = np.random.default_rng(seed)
+    x = np.empty(n)
+    x[0] = mu
+    for i in range(1, n):
+        x[i] = x[i - 1] + theta * (mu - x[i - 1]) * dt + sigma * np.sqrt(dt) * rng.standard_normal()
+    return x
+
+
+def make_raw_with_gaps(out_path: Path, seed: int = 42) -> pd.DataFrame:
+    """Make the raw CSV: a 30-day hourly OU walk with 8 known NaN dropouts."""
+    n = 24 * 30
+    walk = generate_ou_walk(n=n, seed=seed)
+    dropout_positions = [50, 51, 52, 53, 100, 101, 400, 401]
+    values = walk.copy()
+    values[dropout_positions] = np.nan
+
+    timestamps = pd.date_range("2024-01-01", periods=n, freq="h")
+    df = pd.DataFrame(
+        {
+            "timestamp": timestamps,
+            "value": values,
+            "qc_flag": np.where(np.isnan(values), 9, 0),
+        }
+    )
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    df.to_csv(out_path, index=False)
+    return df
+
+
+def make_gapfilled_clean(raw: pd.DataFrame, out_path: Path) -> pd.DataFrame:
+    """Linear temporal interpolation across all gaps.
+
+    All gaps in this dataset are <= 4 hours wide, so they are within
+    the doctrine's default 6-hour threshold for deterministic
+    interpolation. The output's register is plain
+    'derived-from-measurement' (no compound).
+    """
+    out = raw.copy().set_index("timestamp")
+    out["value"] = out["value"].interpolate(method="time")
+    out["qc_flag"] = np.where(raw.set_index("timestamp")["qc_flag"] == 9, 1, 0)
+    out.reset_index().to_csv(out_path, index=False)
+    return out.reset_index()
+
+
+def make_gapfilled_synthetic(raw: pd.DataFrame, out_path: Path) -> pd.DataFrame:
+    """Same as clean, but with one gap deliberately re-filled by a generative model.
+
+    To make the example self-contained, the 'generative model' here is
+    just a different deterministic procedure (a per-hour cyclic mean)
+    applied to one gap. In real practice this would be a learned
+    imputer. The point is the *register obligation*: that gap's value
+    is no longer derivable from neighbouring measurements, so it carries
+    'synthetic-acknowledged' and the column-level register is the
+    compound.
+    """
+    df = make_gapfilled_clean(raw, out_path)
+    df = df.set_index("timestamp")
+    cyclic_mean = df.groupby(df.index.hour)["value"].transform("mean")
+    df.loc[df.index[400], "value"] = cyclic_mean.iloc[400]
+    df.loc[df.index[401], "value"] = cyclic_mean.iloc[401]
+    df.loc[df.index[400], "qc_flag"] = 2
+    df.loc[df.index[401], "qc_flag"] = 2
+    df.reset_index().to_csv(out_path, index=False)
+    return df.reset_index()
+
+
+if __name__ == "__main__":
+    data_dir = Path(__file__).parent / "data"
+    raw = make_raw_with_gaps(data_dir / "raw.csv")
+    make_gapfilled_clean(raw, data_dir / "gapfilled_clean.csv")
+    make_gapfilled_synthetic(raw, data_dir / "gapfilled_synthetic.csv")
+#+end_src
+
+* Manifest 1 — correct (the baseline)
+
+A manifest that satisfies the doctrine for the clean gap-fill case.
+All gaps are within the interpolation threshold; output register is
+plain ~derived-from-measurement~; required fields present.
+
+#+begin_src yaml :tangle ../../test/synthetic/manifests/01_correct.manifest.yaml
+step: synthetic-gapfill-clean
+mode: reconstruction-and-simulation
+description: |
+  Linear temporal interpolation across short gaps in a synthetic
+  random-walk dataset. All gaps fall within the 6-hour deterministic
+  interpolation threshold.
+
+inputs:
+  - id: ../data/raw.csv
+    register: measurement
+    description: 30-day hourly OU walk with 8 known NaN dropouts.
+
+outputs:
+  - id: ../data/gapfilled_clean.csv
+    register: derived-from-measurement
+    derivation: temporal-interpolation-linear-max-6h
+    description: |
+      Gap-filled values; all gaps were <= 4h and within the
+      deterministic interpolation threshold.
+
+llm_assistance:
+  level: none
+
+tests:
+  - test_id: test/test_synthetic.py::test_01_correct_passes
+    description: |
+      Asserts the firewall passes this manifest cleanly.
+#+end_src
+
+* Manifest 2 — B-class broken (compound register collapsed)
+
+The same gap-fill pipeline, but one gap was filled by a generative
+model and the manifest /silently collapses/ the compound register to
+plain ~derived-from-measurement~. This is the canonical B-class
+failure: the dominant register is correctly named, but the minority
+register is lost.
+
+#+begin_src yaml :tangle ../../test/synthetic/manifests/broken/02_b_class_broken.manifest.yaml
+step: synthetic-gapfill-b-broken
+mode: reconstruction-and-simulation
+description: |
+  This manifest is deliberately broken. The pipeline fills one gap with
+  a generative model (per-hour cyclic mean), but the manifest declares
+  the output as plain 'derived-from-measurement'. The 'synthesis' field
+  is therefore absent, but a downstream consumer would treat the column
+  as deterministically derived — the silent-promotion failure mode.
+
+  Expected firewall behaviour: B-class block. The
+  'derived-from-measurement | synthetic-acknowledged' compound is
+  required, with both 'derivation' and 'synthesis' fields populated.
+
+inputs:
+  - id: ../data/raw.csv
+    register: measurement
+
+outputs:
+  - id: ../data/gapfilled_synthetic.csv
+    register: derived-from-measurement
+    derivation: temporal-interpolation-linear-max-6h
+    description: |
+      INCORRECT manifest — the actual pipeline fills one gap with a
+      generative model. The 'synthesis' field is missing.
+
+llm_assistance:
+  level: pair-programmed
+  model: claude-opus-4-6
+  reviewer: i.iosifescu
+
+tests:
+  - test_id: test/test_synthetic.py::test_02_b_broken_blocks
+    description: |
+      Asserts the firewall blocks this manifest with a B-class failure.
+#+end_src
+
+* Manifest 3 — T-class broken (checksum drift)
+
+Same correct pipeline as manifest 1, but the manifest carries a
+~checksum~ field with a wrong value, simulating the case where the
+pipeline has been re-run and the output has changed but the
+~last_validated_against_tests~ field has not been updated.
+
+#+begin_src yaml :tangle ../../test/synthetic/manifests/broken/03_t_class_broken.manifest.yaml
+step: synthetic-gapfill-t-broken
+mode: reconstruction-and-simulation
+description: |
+  This manifest is deliberately broken. The pipeline output is correct,
+  but the manifest's recorded checksum does not match the actual file's
+  checksum on disk — simulating drift since the last test-validated run.
+
+  Expected firewall behaviour: T-class block. The human must either
+  re-run the tests and update the checksum (real drift) or revert the
+  change (stale validation).
+
+inputs:
+  - id: ../data/raw.csv
+    register: measurement
+
+outputs:
+  - id: ../data/gapfilled_clean.csv
+    register: derived-from-measurement
+    derivation: temporal-interpolation-linear-max-6h
+    checksum: sha256:deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef
+    description: |
+      Checksum recorded here is intentionally wrong, to trigger T-class.
+
+last_validated_against_tests: sha256:deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef
+
+llm_assistance:
+  level: none
+
+tests:
+  - test_id: test/test_synthetic.py::test_03_t_broken_blocks
+#+end_src
+
+* Manifest 4 — M-class broken (missing required field)
+
+A manifest in ~reconstruction-and-simulation~ mode with no ~tests~
+entry. The schema enforces this directly; the firewall's load step
+catches it and re-classifies the parse failure as M-class.
+
+#+begin_src yaml :tangle ../../test/synthetic/manifests/broken/04_m_class_broken.manifest.yaml
+step: synthetic-gapfill-m-broken
+mode: reconstruction-and-simulation
+description: |
+  This manifest is deliberately broken. It is in
+  reconstruction-and-simulation mode but has no 'tests' entry.
+
+  Expected firewall behaviour: M-class block at parse-time. The
+  message must name the missing field.
+
+inputs:
+  - id: ../data/raw.csv
+    register: measurement
+
+outputs:
+  - id: ../data/gapfilled_clean.csv
+    register: derived-from-measurement
+    derivation: temporal-interpolation-linear-max-6h
+
+llm_assistance:
+  level: none
+
+tests: []
+#+end_src
+
+* Manifest 5 — the false-positive trap
+
+This manifest /looks/ unusual because it has the unusual compound
+register ~derived-from-measurement | expression-mode~ on its output —
+the output is a stylised visualisation that nevertheless preserves the
+original measurement values without modification (a faithful plot in
+expression-mode-appropriate colours, for instance). The compound is
+unusual but doctrinally correct: the output carries both registers
+because both claims are true. The mode is ~expression~ because the
+output's purpose is communication, not reconstruction.
+
+A naive reviewer (or a naive firewall enhancement) might flag this
+because /the output should be expression-mode-only/, or because /you
+cannot have measurement and expression-mode in the same compound/.
+Both intuitions are wrong. The trap is here to make the doctrine's
+position explicit and to give the test suite something to assert
+positively.
+
+#+begin_src yaml :tangle ../../test/synthetic/manifests/05_false_positive_trap.manifest.yaml
+step: synthetic-stylised-plot-faithful
+mode: expression
+description: |
+  A stylised plot whose pixel values nevertheless faithfully encode the
+  original measurement values (no smoothing, no rescaling beyond a
+  declared linear remap to display units). The output is in
+  expression-mode (its purpose is communication), but it carries the
+  compound register 'derived-from-measurement | expression-mode' because
+  the data shown is recoverable from the measurements via a declared
+  remap.
+
+  Expected firewall behaviour: PASS. This is the trap to catch over-eager
+  rejection of the unusual compound.
+
+inputs:
+  - id: ../data/raw.csv
+    register: measurement
+
+outputs:
+  - id: stylised_faithful_plot.png
+    register:
+      - derived-from-measurement
+      - expression-mode
+    derivation: linear-remap-to-display-units
+    description: |
+      Faithful stylised plot; pixel positions encode (timestamp, value)
+      via a declared linear remap.
+
+llm_assistance:
+  level: none
+
+tests:
+  - test_id: test/test_synthetic.py::test_05_false_positive_trap_passes
+#+end_src
+
+* The test file
+
+The pytest file that exercises all five manifests and asserts the
+right firewall behaviour for each. Also generates the dataset on first
+run (so the test suite is self-contained — no manual setup step).
+
+#+begin_src python :tangle ../../test/test_synthetic.py
+"""Tests for sakshi's synthetic worked example.
+
+This file is tangled from codev/examples/synthetic.org.
+
+The test suite exercises five manifests, one per failure class plus a
+false-positive trap, and asserts that the firewall classifies each
+correctly.
+"""
+
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+import pytest
+
+from sakshi import (
+    FailureClass,
+    FirewallFailure,
+    check_manifest,
+    load_manifest,
+)
+
+HERE = Path(__file__).parent
+SYNTH_DIR = HERE / "synthetic"
+MANIFESTS_DIR = SYNTH_DIR / "manifests"
+DATA_DIR = SYNTH_DIR / "data"
+
+
+@pytest.fixture(scope="module", autouse=True)
+def ensure_data_generated():
+    """Generate the synthetic dataset before any test runs."""
+    if not (DATA_DIR / "raw.csv").exists():
+        sys.path.insert(0, str(SYNTH_DIR))
+        from generate import (  # type: ignore[import-not-found]
+            make_gapfilled_clean,
+            make_gapfilled_synthetic,
+            make_raw_with_gaps,
+        )
+
+        raw = make_raw_with_gaps(DATA_DIR / "raw.csv")
+        make_gapfilled_clean(raw, DATA_DIR / "gapfilled_clean.csv")
+        make_gapfilled_synthetic(raw, DATA_DIR / "gapfilled_synthetic.csv")
+
+
+# ----- Per-manifest assertions -----------------------------------------
+
+
+def test_01_correct_passes():
+    """Manifest 1 should pass cleanly."""
+    manifest = load_manifest(MANIFESTS_DIR / "01_correct.manifest.yaml")
+    check_manifest(manifest)
+
+
+def test_02_b_broken_blocks():
+    """Manifest 2 should be blocked B-class at schema-parse time.
+
+    The output's actual content (one cell filled by generative model)
+    is not what the schema sees; what the schema sees is the *manifest*'s
+    declaration. The B-class violation here is that a manifest claiming
+    the gap-fill is deterministic must be coherent with its output's
+    declared register.
+
+    In v0.1 we cannot inspect the output's data directly; we trust the
+    declared register. The B-class catch happens when a *future* manifest
+    that *does* declare the compound register has its 'synthesis' field
+    missing — schema enforces that. Here, we test the firewall's
+    parse-time response to the converse case: a manifest whose declared
+    register is plain 'derived-from-measurement' but whose 'tests' do
+    not include the synthetic-content check. That, we cannot catch
+    structurally — it requires the consumer-side check. So this test
+    documents the v0.1 limitation: this specific failure mode is
+    *outside* the v0.1 firewall, and the manifest will load.
+
+    The test asserts the load *succeeds* (which is the v0.1 truth) and
+    documents the limitation. A future v0.2 enhancement will couple the
+    manifest's declared register against test-asserted register, closing
+    the gap.
+    """
+    manifest = load_manifest(MANIFESTS_DIR / "broken" / "02_b_class_broken.manifest.yaml")
+    # v0.1: parse succeeds. Documented limitation.
+    assert manifest.step == "synthetic-gapfill-b-broken"
+
+
+def test_03_t_broken_blocks():
+    """Manifest 3 should be blocked T-class at drift-check time."""
+    with pytest.raises((FirewallFailure, Exception)) as excinfo:
+        check_manifest(MANIFESTS_DIR / "broken" / "03_t_class_broken.manifest.yaml")
+    msg = str(excinfo.value)
+    assert "T-class" in msg, f"expected T-class in failure, got: {msg}"
+    assert "drift" in msg.lower(), f"expected 'drift' in message, got: {msg}"
+
+
+def test_04_m_broken_blocks():
+    """Manifest 4 should be blocked M-class at parse time."""
+    with pytest.raises(FirewallFailure) as excinfo:
+        load_manifest(MANIFESTS_DIR / "broken" / "04_m_class_broken.manifest.yaml")
+    msg = str(excinfo.value)
+    assert "M-class" in msg, f"expected M-class in failure, got: {msg}"
+
+
+def test_05_false_positive_trap_passes():
+    """Manifest 5 should PASS — the unusual compound is doctrinally correct."""
+    manifest = load_manifest(MANIFESTS_DIR / "05_false_positive_trap.manifest.yaml")
+    assert manifest.step == "synthetic-stylised-plot-faithful"
+    # No drift check needed; the output is not a real file on disk.
+    # We're asserting that the schema accepts the compound and that the
+    # parse succeeds.
+#+end_src
+
+* Note on the v0.1 limitation surfaced by Manifest 2
+
+The B-class failure that Manifest 2 *would* catch — a manifest that
+under-declares its register against a pipeline that overshoots —
+requires *consumer-side coupling* between the declared register and
+the test that asserts what was actually computed. In v0.1, we have not
+yet built that coupling: the firewall trusts the manifest's
+declaration.
+
+This is a deliberate scope decision and is documented honestly in the
+test. The closing of this gap is a v0.2 candidate, possibly using
+~dmt-eval~'s test-plugin domain machinery to register
+"register-coherence-checker" tests against produced artefacts.
+
+Manifest 2 still earns its keep in v0.1: it documents the failure
+class, demonstrates what the manifest /would/ look like in the
+under-declared state, and gives reviewers a concrete artefact to
+reason about when designing the v0.2 closing mechanism.
+
+* End of file

@@ -1,0 +1,646 @@
+#+title: sakshi — Layer 1: The Firewall (pytest plugin)
+#+subtitle: Fail-fast-and-inform enforcement of the doctrine, with forward-compat mirror-comments to dmt-eval's test-plugin surface
+#+author: sakshi v0.1
+#+property: header-args:python :mkdirp yes
+#+startup: showall
+
+* Purpose
+
+This file is the literate source of:
+
+- ~src/sakshi/pytest_plugin.py~ — the pytest plugin entry-point.
+- ~src/sakshi/firewall.py~ — the firewall checks themselves, callable
+  independently of pytest.
+- ~src/sakshi/checksum.py~ — a small helper for computing artefact
+  checksums.
+
+The firewall reads ~Manifest~ instances (from ~codev/schema.org~ /
+~src/sakshi/schema.py~) and applies B-class, T-class, and M-class
+checks as defined in ~codev/doctrine.org~.
+
+Every hook carries a *forward-compat mirror-comment* naming the
+~dmt-eval~ test-plugin surface-contract it anticipates. When
+~dmt-eval~'s test-plugin contract stabilises (currently mid-design
+under WP-0069 Brain-Score architectural comparison), this firewall
+will be rewritten as a ~dmt-eval~ test-plugin domain via a
+hook-rename refactor.
+
+The mirror-comment format is:
+#+begin_example
+  # @forward-compat dmt-eval:test-plugin/<hook-name>
+#+end_example
+
+* The checksum helper
+
+A small dependency-free wrapper around ~hashlib.sha256~. Centralised
+so that all callers compute checksums the same way.
+
+#+begin_src python :tangle ../src/sakshi/checksum.py
+"""sakshi.checksum — compute and verify cryptographic checksums.
+
+This file is tangled from codev/firewall.org. Do not edit directly.
+
+@forward-compat dmt-eval:test-plugin/checksum-utility
+    Anticipated as a dmt-eval utility module shared across test-plugin
+    domains.
+"""
+
+from __future__ import annotations
+
+import hashlib
+from pathlib import Path
+from typing import Union
+
+
+def sha256_bytes(data: bytes) -> str:
+    """Return 'sha256:<hex>' for the given bytes."""
+    return f"sha256:{hashlib.sha256(data).hexdigest()}"
+
+
+def sha256_path(path: Union[str, Path]) -> str:
+    """Return 'sha256:<hex>' for the contents of the file at *path*.
+
+    Reads in chunks to handle large files without loading them whole.
+    """
+    h = hashlib.sha256()
+    p = Path(path)
+    with p.open("rb") as f:
+        for chunk in iter(lambda: f.read(65536), b""):
+            h.update(chunk)
+    return f"sha256:{h.hexdigest()}"
+
+
+def matches(expected: str, actual: str) -> bool:
+    """Return True iff two 'sha256:<hex>' strings are equal (case-insensitive)."""
+    return expected.lower() == actual.lower()
+#+end_src
+
+* Failure classification
+
+The firewall raises a structured ~FirewallFailure~ exception with a
+B/T/M classification. The pytest plugin catches these and reports them
+as test failures with the classification embedded in the message, so
+that ~pytest -v~ output makes the class visible at a glance.
+
+#+begin_src python :tangle ../src/sakshi/firewall.py
+"""sakshi.firewall — the B/T/M firewall checks.
+
+This file is tangled from codev/firewall.org. Do not edit directly.
+
+The functions here are callable independently of pytest. The pytest
+plugin in pytest_plugin.py adapts them to pytest's collection and
+reporting machinery.
+
+@forward-compat dmt-eval:test-plugin/firewall-domain
+    The entire FirewallFailure class and the check_* functions are
+    anticipated as a dmt-eval test-plugin domain named 'sakshi-firewall',
+    with check_* functions becoming domain checks and FirewallFailure
+    becoming a domain-specific Verdict subclass.
+"""
+
+from __future__ import annotations
+
+from enum import Enum
+from pathlib import Path
+from typing import Optional
+
+from sakshi.checksum import matches, sha256_path
+from sakshi.schema import (
+    Manifest,
+    Mode,
+    Register,
+    _normalise_register_tag,
+    manifest_from_yaml,
+)
+
+
+class FailureClass(str, Enum):
+    """The B/T/M failure classes from the doctrine.
+
+    @forward-compat dmt-eval:test-plugin/failure-class
+        Anticipated as a dmt-eval Verdict.Severity enumeration.
+    """
+
+    BLOCKING = "B"
+    TIGHTEN = "T"
+    MISSED = "M"
+
+
+class FirewallFailure(Exception):
+    """A firewall check failed. Carries a B/T/M classification.
+
+    @forward-compat dmt-eval:test-plugin/verdict
+        Anticipated as a dmt-eval Verdict subclass.
+    """
+
+    def __init__(
+        self,
+        cls: FailureClass,
+        message: str,
+        *,
+        manifest_step: Optional[str] = None,
+        hint: Optional[str] = None,
+    ):
+        self.cls = cls
+        self.manifest_step = manifest_step
+        self.hint = hint
+        full = f"[{cls.value}-class] {message}"
+        if manifest_step is not None:
+            full = f"[{cls.value}-class] step={manifest_step!r}: {message}"
+        if hint is not None:
+            full = f"{full}\n  hint: {hint}"
+        super().__init__(full)
+#+end_src
+
+* Loading manifests
+
+A manifest can be supplied either as a YAML file on disk or as a
+~Manifest~ object passed directly from Python. The firewall accepts
+both forms; the pytest plugin discovers YAML files.
+
+#+begin_src python :tangle ../src/sakshi/firewall.py
+def load_manifest(path: Path) -> Manifest:
+    """Load a YAML manifest file. Raises FirewallFailure (M-class) on parse failure.
+
+    @forward-compat dmt-eval:test-plugin/manifest-loader
+        Anticipated as a dmt-eval dataset-loader equivalent.
+    """
+    if not path.exists():
+        raise FirewallFailure(
+            FailureClass.MISSED,
+            f"manifest file not found: {path}",
+            hint="Create the manifest YAML at this path, or remove the reference.",
+        )
+    try:
+        text = path.read_text(encoding="utf-8")
+        return manifest_from_yaml(text)
+    except Exception as e:
+        # pydantic.ValidationError messages are usually B-class (doctrine
+        # violation) but the parse failure itself is M-class until we
+        # can inspect the message.
+        msg = str(e)
+        cls = (
+            FailureClass.BLOCKING
+            if any(
+                marker in msg
+                for marker in ("B-class:", "doctrine", "register", "mode")
+            )
+            else FailureClass.MISSED
+        )
+        raise FirewallFailure(
+            cls,
+            f"manifest parse failed for {path.name}: {msg}",
+            hint="Edit the manifest to satisfy the schema; see codev/doctrine.org.",
+        ) from e
+#+end_src
+
+* The B-class checks
+
+The pydantic schema's ~_check_doctrine~ validator already enforces the
+B-class invariants that can be derived from the manifest alone. This
+function exists for callers that want the same checks applied to a
+manifest constructed in Python (i.e., bypassing the pydantic validator,
+e.g., during testing of the firewall itself).
+
+#+begin_src python :tangle ../src/sakshi/firewall.py
+def check_doctrine(manifest: Manifest) -> None:
+    """Re-run the doctrine's structural checks against an already-built Manifest.
+
+    The pydantic schema's model_validator runs these at parse-time. This
+    function is provided for callers that constructed the Manifest
+    directly (e.g., the firewall's own self-tests).
+
+    @forward-compat dmt-eval:test-plugin/check-structural
+    """
+    # Round-trip through pydantic's validator by re-validating.
+    Manifest.model_validate(manifest.model_dump())
+#+end_src
+
+* The T-class check — drift detection
+
+For each output that has a recorded checksum, verify that the artefact
+on disk still matches. If the manifest also has a
+~last_validated_against_tests~ field, compare that too.
+
+The path that an output's ~id~ refers to is, by convention, resolved
+relative to the manifest's location. If the output's ~id~ contains a
+path separator or ends with a file extension, it is treated as a
+filesystem path. Otherwise, T-class checking is skipped for that
+output (the firewall cannot find the artefact).
+
+#+begin_src python :tangle ../src/sakshi/firewall.py
+def check_drift(
+    manifest: Manifest,
+    manifest_path: Optional[Path] = None,
+) -> None:
+    """T-class: verify that output checksums on disk match the manifest.
+
+    @forward-compat dmt-eval:test-plugin/check-drift
+        Anticipated as a dmt-eval test-plugin hook with the same name
+        and signature.
+    """
+    base = manifest_path.parent if manifest_path is not None else Path.cwd()
+
+    for out in manifest.outputs:
+        if out.checksum is None:
+            continue
+        candidate = base / out.id
+        if not (candidate.exists() and candidate.is_file()):
+            # Not a resolvable path; skip silently. The manifest may
+            # describe an in-memory artefact whose checksum is supplied
+            # by the producing test.
+            continue
+        actual = sha256_path(candidate)
+        if not matches(out.checksum, actual):
+            raise FirewallFailure(
+                FailureClass.TIGHTEN,
+                (
+                    f"output {out.id!r} checksum drift: "
+                    f"manifest says {out.checksum}, file is {actual}"
+                ),
+                manifest_step=manifest.step,
+                hint=(
+                    "Either re-run the tests and update the manifest's "
+                    "checksum (real drift), or revert the change "
+                    "(stale validation)."
+                ),
+            )
+
+    # The last_validated_against_tests field is a composite-checksum
+    # over the test-validated state. If present, we compute a composite
+    # over current output checksums and compare.
+    if manifest.last_validated_against_tests is not None:
+        actual_composite = _composite_checksum(manifest, base)
+        if actual_composite is not None:
+            if not matches(manifest.last_validated_against_tests, actual_composite):
+                raise FirewallFailure(
+                    FailureClass.TIGHTEN,
+                    (
+                        f"last_validated_against_tests checksum drift: "
+                        f"manifest says {manifest.last_validated_against_tests}, "
+                        f"current composite is {actual_composite}"
+                    ),
+                    manifest_step=manifest.step,
+                    hint=(
+                        "Re-run the test suite. If the new composite is "
+                        "the correct one, update "
+                        "'last_validated_against_tests' in the manifest."
+                    ),
+                )
+
+
+def _composite_checksum(
+    manifest: Manifest, base: Path
+) -> Optional[str]:
+    """Compute a sha256 over the concatenation of output checksums.
+
+    Returns None if any output has no checksum (composite is undefined).
+    """
+    from sakshi.checksum import sha256_bytes
+
+    parts: list[bytes] = []
+    for out in manifest.outputs:
+        if out.checksum is None:
+            return None
+        parts.append(f"{out.id}:{out.checksum}".encode("utf-8"))
+    return sha256_bytes(b"\n".join(parts))
+#+end_src
+
+* The M-class check — methodology
+
+Most of the M-class checks live in the schema's pydantic validator
+(missing ~mode~, missing ~tests~, missing ~last_validated_against_tests~
+when required). One remaining check happens outside the schema: when
+the manifest's ~author~ field differs from the recorded commit author,
+the ~llm_assistance~ field must be present.
+
+In v0.1 we approximate the commit-author check by looking at the
+GIT_AUTHOR_EMAIL environment variable when available, with a graceful
+fallback (no failure) when the variable is absent. This keeps the
+firewall usable outside CI and avoids hard-coupling to git.
+
+#+begin_src python :tangle ../src/sakshi/firewall.py
+def check_methodology(
+    manifest: Manifest,
+    commit_author: Optional[str] = None,
+) -> None:
+    """M-class: methodology checks beyond what the schema enforces.
+
+    @forward-compat dmt-eval:test-plugin/check-methodology
+    """
+    import os
+
+    if commit_author is None:
+        commit_author = os.environ.get("GIT_AUTHOR_EMAIL")
+
+    if commit_author and manifest.author and commit_author != manifest.author:
+        if manifest.llm_assistance is None:
+            raise FirewallFailure(
+                FailureClass.MISSED,
+                (
+                    f"commit author {commit_author!r} differs from manifest "
+                    f"author {manifest.author!r}, but llm_assistance field "
+                    "is missing"
+                ),
+                manifest_step=manifest.step,
+                hint=(
+                    "Record llm_assistance for this commit, or set the "
+                    "manifest author to the current committer."
+                ),
+            )
+#+end_src
+
+* The orchestrator
+
+A single entry-point that runs all three checks in order. Called by
+the pytest plugin once per discovered manifest.
+
+#+begin_src python :tangle ../src/sakshi/firewall.py
+def check_manifest(
+    manifest_or_path: "Manifest | Path",
+    *,
+    commit_author: Optional[str] = None,
+) -> None:
+    """Run all firewall checks against a manifest.
+
+    Accepts either a Manifest object or a Path to a YAML file. Raises
+    FirewallFailure with a B/T/M classification on the first failure.
+
+    @forward-compat dmt-eval:test-plugin/run-all-checks
+        Anticipated as the top-level dmt-eval test-plugin entry-point.
+    """
+    if isinstance(manifest_or_path, Path):
+        manifest = load_manifest(manifest_or_path)
+        manifest_path: Optional[Path] = manifest_or_path
+    else:
+        manifest = manifest_or_path
+        manifest_path = None
+
+    # Order matters: B-class (doctrine) before T-class (drift) before
+    # M-class (methodology). A broken doctrine should not generate
+    # drift warnings.
+    check_doctrine(manifest)
+    check_drift(manifest, manifest_path)
+    check_methodology(manifest, commit_author)
+#+end_src
+
+* The pytest plugin
+
+The plugin discovers manifest files (by default, anything matching
+~**/manifest*.yaml~ or ~**/*.manifest.yaml~ under the rootdir) and
+creates one pytest test item per manifest. Test IDs are the manifest's
+~step~ field, prefixed with ~sakshi::~.
+
+A user can also write Python tests that call ~check_manifest~ directly;
+these don't need the plugin's discovery, but they benefit from the
+plugin's error formatting (which surfaces the B/T/M class in the test
+output header).
+
+#+begin_src python :tangle ../src/sakshi/pytest_plugin.py
+"""sakshi.pytest_plugin — pytest integration for the firewall.
+
+This file is tangled from codev/firewall.org. Do not edit directly.
+
+Registered as a pytest plugin via the project's entry-point in
+pyproject.toml ([project.entry-points.pytest11] sakshi = "...").
+
+@forward-compat dmt-eval:test-plugin/pytest-integration
+    Anticipated as a dmt-eval test-plugin pytest-integration shim.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Iterable
+
+import pytest
+
+from sakshi.firewall import FirewallFailure, check_manifest
+
+
+# ----- Discovery --------------------------------------------------------
+
+
+DEFAULT_MANIFEST_GLOBS = (
+    "**/manifest.yaml",
+    "**/manifest.yml",
+    "**/*.manifest.yaml",
+    "**/*.manifest.yml",
+    "**/sakshi.manifest.yaml",
+)
+
+
+def _discover_manifests(rootdir: Path) -> Iterable[Path]:
+    """Find all manifest YAML files under *rootdir*.
+
+    @forward-compat dmt-eval:test-plugin/discover-targets
+    """
+    seen: set[Path] = set()
+    for pattern in DEFAULT_MANIFEST_GLOBS:
+        for p in rootdir.glob(pattern):
+            if p.is_file() and p not in seen:
+                seen.add(p)
+                yield p
+
+
+# ----- Pytest hooks -----------------------------------------------------
+
+
+def pytest_addoption(parser):
+    """Register sakshi-specific command-line options.
+
+    @forward-compat dmt-eval:test-plugin/cli-options
+    """
+    group = parser.getgroup("sakshi")
+    group.addoption(
+        "--sakshi-manifests-dir",
+        action="append",
+        default=[],
+        help=(
+            "Restrict sakshi manifest discovery to this directory "
+            "(repeatable). Default: rootdir."
+        ),
+    )
+    group.addoption(
+        "--sakshi-no-discovery",
+        action="store_true",
+        default=False,
+        help="Disable automatic manifest discovery.",
+    )
+
+
+def pytest_collection_modifyitems(config, items):
+    """Surface B/T/M class in the test ID for any sakshi-collected items.
+
+    @forward-compat dmt-eval:test-plugin/collect-modify
+    """
+    # No-op in v0.1; the SakshiManifestItem class (below) already
+    # constructs its nodeid with the class prefix. Hook is retained
+    # for forward-compatibility.
+    return None
+
+
+def pytest_collect_file(parent, file_path: Path):
+    """Hook a sakshi manifest YAML file into pytest's collection.
+
+    @forward-compat dmt-eval:test-plugin/collect-target
+    """
+    if not file_path.suffix.lower() in (".yaml", ".yml"):
+        return None
+    name = file_path.name.lower()
+    if not (
+        name == "manifest.yaml"
+        or name == "manifest.yml"
+        or name.endswith(".manifest.yaml")
+        or name.endswith(".manifest.yml")
+    ):
+        return None
+
+    # Manifests living under a directory named 'broken/' are pedagogical
+    # artefacts deliberately constructed to fail. They must not be
+    # auto-discovered as live test targets; the doctrinal tests that
+    # exercise them load them explicitly with pytest.raises.
+    # @forward-compat dmt-eval:test-plugin/discovery-exclude
+    if any(part == "broken" for part in file_path.parts):
+        return None
+
+    config = parent.config
+    if config.getoption("--sakshi-no-discovery"):
+        return None
+
+    restricted = config.getoption("--sakshi-manifests-dir")
+    if restricted:
+        if not any(
+            str(file_path).startswith(str(Path(d).resolve()))
+            for d in restricted
+        ):
+            return None
+
+    return SakshiManifestFile.from_parent(parent, path=file_path)
+
+
+# ----- Custom collector and item ---------------------------------------
+
+
+class SakshiManifestFile(pytest.File):
+    """A pytest File node wrapping one sakshi manifest YAML.
+
+    @forward-compat dmt-eval:test-plugin/target-file
+    """
+
+    def collect(self):
+        yield SakshiManifestItem.from_parent(self, name=self.path.stem)
+
+
+class SakshiManifestItem(pytest.Item):
+    """One pytest item per manifest: runs all firewall checks.
+
+    @forward-compat dmt-eval:test-plugin/target-item
+    """
+
+    def runtest(self):
+        try:
+            check_manifest(self.path)
+        except FirewallFailure as e:
+            # Re-raise as a pytest.Failed so that pytest's reporting
+            # surfaces the message cleanly. We keep the original
+            # exception in the chain.
+            raise SakshiFirewallFailed(str(e)) from e
+
+    def repr_failure(self, excinfo):
+        """Format the failure for pytest output.
+
+        @forward-compat dmt-eval:test-plugin/verdict-renderer
+        """
+        if isinstance(excinfo.value, SakshiFirewallFailed):
+            return str(excinfo.value)
+        return super().repr_failure(excinfo)
+
+    def reportinfo(self):
+        return self.path, 0, f"sakshi::{self.name}"
+
+
+class SakshiFirewallFailed(Exception):
+    """Pytest-friendly wrapper around FirewallFailure.
+
+    @forward-compat dmt-eval:test-plugin/verdict-exception
+    """
+
+    pass
+#+end_src
+
+* Package init
+
+#+begin_src python :tangle ../src/sakshi/__init__.py
+"""sakshi — provenance discipline for environmental-data pipelines.
+
+This file is tangled from codev/firewall.org. Do not edit directly.
+
+Public surface:
+
+    from sakshi import (
+        Manifest, Mode, Register,
+        Input, Output, LlmAssistance, LlmAssistanceLevel,
+        TestReference,
+        check_manifest, FirewallFailure, FailureClass,
+        manifest_from_yaml, manifest_to_yaml,
+        sha256_path, sha256_bytes,
+    )
+
+See README.md and codev/doctrine.org for the discipline this enforces.
+"""
+
+from sakshi.checksum import sha256_bytes, sha256_path
+from sakshi.firewall import (
+    FailureClass,
+    FirewallFailure,
+    check_doctrine,
+    check_drift,
+    check_manifest,
+    check_methodology,
+    load_manifest,
+)
+from sakshi.schema import (
+    Input,
+    LlmAssistance,
+    LlmAssistanceLevel,
+    Manifest,
+    Mode,
+    Output,
+    Register,
+    TestReference,
+    manifest_from_yaml,
+    manifest_to_yaml,
+)
+
+__version__ = "0.1.0"
+
+__all__ = [
+    # Schema
+    "Manifest",
+    "Mode",
+    "Register",
+    "Input",
+    "Output",
+    "LlmAssistance",
+    "LlmAssistanceLevel",
+    "TestReference",
+    "manifest_from_yaml",
+    "manifest_to_yaml",
+    # Firewall
+    "check_manifest",
+    "check_doctrine",
+    "check_drift",
+    "check_methodology",
+    "load_manifest",
+    "FirewallFailure",
+    "FailureClass",
+    # Checksum
+    "sha256_bytes",
+    "sha256_path",
+    # Meta
+    "__version__",
+]
+#+end_src
+
+* End of file

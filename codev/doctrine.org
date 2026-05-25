@@ -1,0 +1,523 @@
+#+title: sakshi — Doctrine
+#+subtitle: The four-register firewall and the two-mode polymorphism
+#+author: sakshi v0.1 (mayalucia / le-comptoir commission)
+#+startup: showall
+
+* Preamble — why a doctrine at all
+
+A discipline-layer can be either /a set of habits/ or /a written doctrine/. The
+former lives in the heads of people who learned it from other people; it
+travels by apprenticeship. The latter lives on disk; it travels by reading.
+
+When a research group is small, when its members all came up through the same
+lab, and when the data passes between hands that already know what the data
+means, habits are enough. The register of a column is /understood/. The mode
+of a figure is /felt/. The discipline is in the air of the room.
+
+That arrangement has become brittle. Two things broke it:
+
+1. *Open data became the norm.* A dataset published to EnviDat or to a
+   thematic repository is consumed downstream by people who never met its
+   producer. The habits that held the register stable in the producing lab
+   do not travel with the CSV.
+
+2. *Large language models entered the workflow.* The scientist who once
+   wrote their own quality-control script now asks an assistant to "tidy
+   this up". The assistant is helpful, and helpfulness — in the absence of
+   register-awareness — silently demotes measurements into derivations,
+   silently smooths sensor artefacts that were the actual scientific signal,
+   silently fills gaps with plausible values that pass downstream
+   sanity-checks but encode a generative model the manifest does not declare.
+
+Neither of these is fraud. Neither is even error in the conventional sense.
+Both are the natural failure mode of a /workflow whose register-discipline
+lives in the heads of people who are no longer at the keyboard/.
+
+~sakshi~ is the discipline made external. It is a small written doctrine, a
+small schema, and a small enforcement tool. The doctrine is the
+load-bearing part. The schema and the enforcement tool are implementations
+of the doctrine. You can re-implement them. You should not re-invent the
+doctrine without good reason.
+
+* The four registers
+
+Every data artefact in a scientific-data pipeline — every column in a
+DataFrame, every file on disk, every value in a model output, every pixel
+in a figure — has an /epistemic status/. It came from somewhere. The
+somewhere matters.
+
+We name four registers. They are not exhaustive — the fourth is a
+deliberate catch-all for everything that is not the first three — but they
+are sufficient to draw the firewall that matters.
+
+** Register 1 — ~measurement~
+
+/Definition/: a direct reading from a sensor, an observation, or a recorded
+event in the physical world.
+
+/Examples/: a temperature value read from a thermistor at IMIS station
+WFJ (Weissfluhjoch) at 14:00 UTC on 2024-02-15. The number of cells of
+a given type counted in a tissue slice. The pixel intensity at coordinate
+~(i, j)~ in a Sentinel-2 tile, as delivered by the Copernicus catalogue
+before any radiometric processing the consumer applies.
+
+/Note/: ~measurement~ is the registration of *what was the case*. It is the
+ground truth that the rest of the pipeline owes its existence to. It is
+also the register that most needs protecting: the value of every
+downstream artefact depends on whether the original measurement remains
+recoverable.
+
+/What it is not/: a "measurement" is not a /good/ measurement, a /calibrated/
+measurement, a /quality-controlled/ measurement, or a /useful/ measurement.
+A spurious sensor reading caused by a bird sitting on the radiation shield
+is still a measurement. The register tag is about /origin/, not /quality/.
+
+** Register 2 — ~derived-from-measurement~
+
+/Definition/: a deterministic, documented function of one or more
+measurements (or of other ~derived-from-measurement~ values), where the
+derivation is recorded in the manifest and the inputs remain identifiable.
+
+/Examples/: a daily mean temperature computed from hourly readings. A
+gap-filled column where the gap-fill rule is /linear temporal interpolation
+between neighbouring measurements within 6 hours/ — the rule is
+deterministic, the inputs are measurements, the procedure is named. The
+biomass density computed from cell counts and a known per-cell mass.
+
+/Key property — recoverability/: given the manifest's record of the
+derivation, the ~measurement~-register inputs, and the procedure, the
+~derived-from-measurement~ value can be regenerated. If you cannot
+regenerate it, it is not in this register; it is something else.
+
+/Failure mode it catches/: silent in-place computation. A scientist
+applies a smoothing filter to a "noisy" temperature column and overwrites
+it. The column is now ~derived-from-measurement~, but its register tag was
+never updated, the smoothing procedure was not recorded, and the original
+measurements are no longer in the file. Downstream consumers will read
+the column as if it were ~measurement~ and produce uncertainty estimates
+that are too tight.
+
+** Register 3 — ~synthetic-acknowledged~
+
+/Definition/: a value generated by a model, a simulator, an LLM, a
+sampling procedure, or any process whose output is *not* a deterministic
+function of measurements — and whose synthetic status is declared in the
+manifest.
+
+/Examples/: gap-filled values produced by a learned imputation model.
+Counterfactual scenarios from a numerical climate simulation. Predictions
+from a trained statistical model. Strings produced by an LLM (whether
+prose, code, or numerical estimates). Bootstrap-resampled values used to
+estimate uncertainty.
+
+/The "acknowledged" is load-bearing/. There is no register called
+"synthetic-unacknowledged" in sakshi's vocabulary. A synthetic value that
+is not declared as such is not a different register — it is a /failure/ of
+the discipline. The compound name forces the question at write-time: /am
+I willing to put this in writing?/
+
+/Note on the LLM case/. Code generated by an LLM, when that code is
+reviewed and committed by a human, is in a strange position. The code
+itself is ~synthetic-acknowledged~ in its origin but, once accepted by
+review, behaves as code: it is run, it produces outputs, those outputs
+have their own register depending on what the code does. The doctrine's
+position is that the *origin* is recorded in the manifest's
+~llm_assistance:~ field (which model, what level of assistance, who
+reviewed), and the *output* register is determined by what the code does
+to its inputs, not by whether the code itself was LLM-written. This is
+consistent with how we treat human-written code: the author is recorded,
+the output register depends on the operation.
+
+** Register 4 — ~expression-mode~
+
+/Definition/: a rendering whose intent is to /communicate an experience or
+an idea/, and whose claim to truth is *different in kind* from the claims
+of registers 1–3.
+
+/Examples/: an artistic visualisation that exaggerates a topographical
+feature for emphasis. A pedagogical animation that uses fictional but
+plausible data to illustrate a concept. A schematic figure where colours
+are chosen for clarity rather than fidelity. A model rendered with
+non-physical lighting for legibility. A text description of a phenomenon
+written for a general audience.
+
+/Key property — the firewall asymmetry/: an ~expression-mode~ artefact may
+have ~measurement~ or ~derived-from-measurement~ inputs (a stylised plot
+made from real data; a schematic informed by real geometry). But the
+*output* is in expression-mode, and the output may *not* flow downstream
+into a ~reconstruction-and-simulation~ pipeline step without an explicit
+~re-measurement:~ declaration. You cannot read pixels off a stylised
+figure and treat them as measurements. You cannot take a pedagogical
+animation's coordinates as ground truth. The firewall is directional.
+
+/Note/: ~expression-mode~ is not "low-quality" or "non-scientific". A
+pedagogical animation can be more truthful than a literal plot of raw
+data — it can convey what /matters/ where the literal plot conveys only
+what was /sampled/. The point of the register is to mark which kind of
+truth-claim is being made, so that downstream consumers know which
+operations are permitted.
+
+** Compound registers
+
+A single artefact may carry more than one register tag, and often must.
+
+/Example 1/. A gap-filled IMIS temperature column. Most values are
+~derived-from-measurement~ (linear temporal interpolation). Some values
+are ~synthetic-acknowledged~ (a learned model used where the gap was too
+wide for interpolation). The column-level register is
+~derived-from-measurement | synthetic-acknowledged~. A per-row register
+column (often called a flag column in environmental-data conventions) is
+required to distinguish.
+
+/Example 2/. An ecological-suitability raster computed from a digital
+elevation model (~measurement~ via SwissTopo), a vegetation classification
+(~derived-from-measurement~ via a deterministic threshold on Sentinel-2
+NDVI), and a climatic suitability layer from a learned bioclim model
+(~synthetic-acknowledged~). The output raster is
+~derived-from-measurement | synthetic-acknowledged~. The acknowledgement
+in the compound forces downstream consumers to recognise that the raster
+has a generative component, even if most of the pipeline upstream was
+deterministic.
+
+/The discipline/: compound registers are *required where applicable*. The
+firewall refuses to collapse a compound to its dominant single register
+for convenience. The reason is that the failure modes the firewall is
+designed to catch — silent demotion, silent promotion — are usually
+failures of the /minority/ register being lost, not the majority.
+
+** The firewall
+
+We can now state the firewall directly. It is short.
+
+#+begin_quote
+*No pipeline step may silently demote or promote a register.*
+
+A *demotion* is an output whose register-tag is closer to ~measurement~
+than its inputs and operation justify.
+
+A *promotion* is an output whose register-tag is farther from
+~measurement~ than its inputs and operation require, *unless* the
+operation is declared.
+
+The firewall holds when every register change between inputs and outputs
+is named in the manifest's ~derivation:~ or ~synthesis:~ field, and when
+no compound tag has been collapsed.
+#+end_quote
+
+That is the doctrine's content. The schema (~codev/schema.org~) is how a
+human declares this in writing. The firewall plugin (~codev/firewall.org~)
+is how the discipline gets enforced at test-time.
+
+* The two modes
+
+Registers tag /artefacts/. Modes tag /pipeline steps/. A pipeline step is
+in one of two modes, and the obligations are different.
+
+** Mode 1 — ~reconstruction-and-simulation~
+
+/Definition/: the step's goal is to model a real system — to recover what
+happened, to estimate what is true, or to simulate what would happen under
+specified conditions. Measurements are the ground truth that the step's
+outputs are accountable to.
+
+/Examples/: a quality-control pipeline that flags suspect IMIS readings.
+A gap-filling step. A climate-reanalysis product. A retrieval algorithm
+that turns Sentinel-2 reflectances into a vegetation-index map. A
+neuronal-tissue reconstruction. A landslide-susceptibility model.
+
+/Obligations under this mode/:
+
+- Every register-promotion must be declared with a ~derivation:~ entry
+  (for ~measurement~ → ~derived-from-measurement~) or a ~synthesis:~ entry
+  (for any flow to ~synthetic-acknowledged~).
+- Test coverage is required. The manifest must reference at least one
+  test that the step has passed; the checksum of the test-validated
+  output must be recorded in ~last_validated_against_tests:~.
+- LLM-assistance must be recorded in ~llm_assistance:~ if the step's
+  code was produced or modified with LLM help. The field has a
+  ~reviewer:~ requirement.
+
+** Mode 2 — ~expression~
+
+/Definition/: the step's goal is to render an experience, communicate an
+insight, or produce an artefact whose value is in /how it conveys/ rather
+than in /what it predicts/. Measurements are a starting palette, not a
+ground truth the step must reproduce.
+
+/Examples/: a poster figure for a public-engagement event. A
+pedagogical animation. An artistic visualisation of model output. A
+schematic in a teaching slide. A rendered scene in a digital-twin
+gallery.
+
+/Obligations under this mode/:
+
+- All outputs must carry the ~expression-mode~ register (possibly compound
+  with their input registers, but ~expression-mode~ must be present).
+- All ~measurement~ or ~derived-from-measurement~ inputs must be cited.
+- Downstream consumption is *firewalled*: an ~expression-mode~ output
+  may not flow into a ~reconstruction-and-simulation~ step without an
+  explicit ~re-measurement:~ declaration in the consuming step's
+  manifest. The re-measurement declaration acknowledges that the
+  pipeline is re-extracting data from an artistic rendering, and
+  records the procedure.
+
+** Why two modes and not three (or seven)
+
+The first version of this doctrine had four modes: reconstruction,
+simulation, expression, and exploration. Reconstruction and simulation
+were collapsed because their obligations turned out to be identical —
+both treat measurements as ground truth, both require derivation
+declarations, both require test coverage. The difference between them
+(reconstruction = measurements of a past or present state; simulation =
+measurements as boundary conditions for a hypothetical state) is
+content, not discipline.
+
+Exploration was removed because it kept becoming a wildcard. A pipeline
+step labelled "exploration" was being used as an excuse to skip
+derivation declarations and test coverage. The discipline failed
+silently. The two-mode polymorphism is partly a doctrinal stance:
+/there is no mode in which the firewall doesn't apply./ An "exploratory"
+analysis whose outputs go nowhere is fine — it just doesn't have a
+manifest. The moment its outputs are committed to the repository or
+shown to a colleague, it has become reconstruction (if the outputs are
+meant to be true) or expression (if the outputs are meant to convey).
+There is no third option.
+
+If a use case appears to require a third mode, surface it for doctrinal
+review. Almost always, the case fits one of the two with the right
+compound register.
+
+** The polymorphism
+
+The same dataset can serve both modes — usually does, in any active
+project — but a manifest must declare which mode is active at each step.
+A QC-filtered IMIS temperature column might be the output of a
+~reconstruction-and-simulation~ step, then become an input to an
+~expression-mode~ step that produces a hero-figure for a museum
+installation. Both steps have manifests. Each declares its mode. The
+firewall reads the modes and applies the right obligations to each.
+
+The polymorphism is the doctrine's name for /the same artefact carrying
+different obligations depending on which step is operating on it/.
+
+* The B/T/M failure taxonomy
+
+When the firewall finds a problem, it classifies the problem into one of
+three classes. The classification is borrowed from MāyāLucIA's review
+discipline (specifically mayadev's review-pass conventions) and adapted
+to manifest-failure cases.
+
+** B-class — Blocking
+
+A *register-tag violation*. The schema is wrong, the firewall is broken,
+or the doctrine has been violated. Examples:
+
+- An output declared ~measurement~ has inputs that are not ~measurement~
+  and an operation that transforms them.
+- A compound register has been collapsed to a single tag (e.g., a column
+  declared ~derived-from-measurement~ has rows that were filled by a
+  learned imputation model, but the ~synthetic-acknowledged~ tag is
+  missing from the compound).
+- An ~expression-mode~ output flows into a ~reconstruction-and-simulation~
+  step with no ~re-measurement:~ declaration.
+- A manifest's ~mode:~ field is absent or is not one of the two valid
+  modes.
+
+B-class failures *block the build*. They cannot be acknowledged-and-passed.
+They must be fixed.
+
+** T-class — Tighten-on-commit
+
+An *output checksum has drifted* since the manifest's
+~last_validated_against_tests:~ value. The pipeline has changed (possibly
+correctly, possibly not) and the tests have not been re-run against the
+new output.
+
+T-class failures *block the build until a human decides*:
+
+- /Real drift/: the change is intentional, the new output is the correct
+  output, the tests need re-running, and the new checksum becomes the new
+  ~last_validated_against_tests:~. Human commits the manifest with the
+  new checksum.
+- /Stale validation/: the change is unintentional, the tests have not
+  been run, and the change reflects a real bug. Human reverts.
+
+The discipline is that the decision happens /at commit time/, with the
+human present, not later from a report.
+
+** M-class — Missed (methodology)
+
+A *required tag, field, or declaration is missing*. Examples:
+
+- ~mode:~ field absent.
+- ~register:~ tag missing on an input or output.
+- ~tests:~ entry absent.
+- ~last_validated_against_tests:~ checksum field absent (when ~tests:~ is
+  present).
+- ~llm_assistance:~ field missing when the commit author differs from
+  the manifest-recorded author and the step's code has changed.
+
+M-class failures *fail fast with a message naming exactly what is
+missing*. The message is the discipline's surface — the human reads it
+and knows what to write. Reports defer that. Failures force it.
+
+** The output is the failure message
+
+A common request when first encountering this discipline is: /can sakshi
+generate a report of all the manifests in my repository, showing which
+are compliant and which are not?/
+
+No. That request is a category error. The discipline lives in the moment
+of failure, when a human is at the keyboard with a decision to make.
+A report defers the decision to /later/, to /someone else/, to a /review
+meeting/. The discipline disappears into the bureaucracy of recording.
+
+The pytest plugin fails the build. The message tells the human what is
+wrong and what to do. The human acts. The next build passes, or it
+fails again with a different message, and the human acts again. This
+is the loop. It is small. It is the point.
+
+If a report is needed for an external audit — a funding review, a
+publication requirement — it can be generated *from the manifests
+themselves*, by a separate tool, after the manifests have been brought
+to a compliant state by the firewall's failure-and-fix loop. The
+report-generator is not part of sakshi. It is downstream of sakshi.
+Conflating them collapses the doctrine.
+
+* Worked example — the silent-demotion failure
+
+To make the doctrine concrete, here is the canonical failure case the
+discipline is designed to catch. The example is small. Read it slowly.
+
+A researcher has a CSV of hourly IMIS temperature readings from
+Weissfluhjoch for January 2024. The CSV has columns ~timestamp~,
+~temperature_celsius~, ~qc_flag~. The ~qc_flag~ column carries the IMIS
+standard QC codes: ~0~ = passed all checks, ~1~ = flagged for review,
+~9~ = missing.
+
+The researcher wants to produce a clean daily-mean temperature time
+series for a downstream analysis.
+
+The researcher asks an LLM coding assistant: /"Give me a Python script
+that loads this CSV and produces a daily-mean temperature, handling
+missing values."/
+
+The assistant produces something like:
+
+#+begin_src python
+import pandas as pd
+
+df = pd.read_csv("imis_wfj_jan2024.csv", parse_dates=["timestamp"])
+df = df.set_index("timestamp")
+df["temperature_celsius"] = df["temperature_celsius"].interpolate(method="time")
+daily = df["temperature_celsius"].resample("D").mean()
+daily.to_csv("imis_wfj_jan2024_daily.csv")
+#+end_src
+
+The script runs. It produces output. The output looks reasonable. The
+researcher commits.
+
+What has happened, in register terms:
+
+1. Original ~temperature_celsius~: ~measurement~ (with some ~9~-flagged
+   rows that are absent in the physical world).
+2. After ~.interpolate(method="time")~: silently became
+   ~derived-from-measurement~ on the rows that were ~9~-flagged, and
+   *still labelled as if it were the original measurement column* in the
+   downstream CSV.
+3. After ~.resample("D").mean()~: ~derived-from-measurement~ as a daily
+   aggregate, but inheriting the silent demotion from step 2.
+
+The downstream consumer reads ~imis_wfj_jan2024_daily.csv~ and treats it
+as a daily-mean derived from hourly measurements. They produce
+uncertainty estimates assuming all hours contributed real measurements.
+The estimates are too tight.
+
+What sakshi would have caught, /if/ the manifest discipline had been in
+place:
+
+- M-class: the script has no manifest. Build fails. Researcher writes a
+  manifest declaring inputs (~register: measurement~), outputs
+  (~register: derived-from-measurement~), and the derivation:
+  ~temporal-interpolation-then-daily-mean~.
+- B-class: the manifest, once written, would force the researcher to
+  reckon with the ~9~-flagged rows. The interpolation step silently
+  closes them. If the interpolation is across a gap longer than some
+  threshold (sakshi's default: 6 hours), the closed values are no longer
+  ~derived-from-measurement~ but ~synthetic-acknowledged~. The
+  researcher updates the script to emit a per-row flag, and the output
+  register becomes the compound ~derived-from-measurement |
+  synthetic-acknowledged~.
+
+The result is the same daily-mean CSV, but with a flag column and a
+compound register tag. The downstream consumer's uncertainty estimates
+are now correct. The discipline did its job.
+
+The LLM was not malicious. The script was not wrong. The /workflow/ was
+missing a step. sakshi puts the step back in.
+
+* Worked example — the expression-firewall failure
+
+The second canonical case. Briefer.
+
+An ecologist produces an artistic visualisation of an alpine valley for
+a public-engagement event. The visualisation is a 3D rendering. It
+takes a real digital elevation model (~measurement~), drapes a Sentinel-2
+RGB composite over it (~derived-from-measurement~), and exaggerates the
+vertical scale by a factor of 1.5 for visual impact. The output is a
+high-resolution PNG, declared in its manifest as
+~register: derived-from-measurement | expression-mode~ and
+~mode: expression~.
+
+A year later, a different researcher finds the PNG on the institutional
+server. They want elevation data for a watershed-area calculation. The
+PNG is the only file they can find. They write a script to extract
+pixel-height values from the rendering and compute slopes.
+
+If their script has a manifest, the firewall fires:
+
+- The PNG's manifest declares ~expression-mode~.
+- The new script's manifest declares ~mode: reconstruction-and-simulation~.
+- An ~expression-mode~ artefact may not flow into a
+  ~reconstruction-and-simulation~ step without a ~re-measurement:~
+  declaration.
+- B-class failure. Build blocked.
+
+The new researcher reads the failure. They have two paths:
+
+1. /Add a ~re-measurement:~ declaration/ that acknowledges the
+   vertical-exaggeration factor (1.5), reverses it explicitly, and notes
+   that the pixel-extracted values are now ~derived-from-expression~ — a
+   compound register that downstream consumers will see as carrying an
+   expression-mode ancestor.
+2. /Find the original DEM/ and use it directly.
+
+Either is acceptable. Either is /honest/. The previous arrangement —
+silently extracting pixel values from a stylised rendering and using
+them as measurements — was the actual failure. The firewall caught it.
+
+* Coda — what this doctrine assumes about the practitioner
+
+sakshi's doctrine assumes its practitioner is a /careful person under
+time pressure/. It does not assume they are infallible. It does not
+assume they have memorised the doctrine. It assumes they will write a
+manifest /because the build forces them to/, and that the manifest's
+required fields will prompt the right reckoning at the moment of
+writing.
+
+The doctrine is not a moral framework. It is a tool. The four registers
+and two modes are chosen because they are the minimum vocabulary
+sufficient to catch the failure cases that matter in LLM-assisted
+environmental-data work. They are not the final word. A different
+domain — clinical trials, financial reporting, criminal forensics — would
+need different registers and different modes. The /structure/ of the
+discipline (named registers, named modes, fail-fast on violation) is
+portable. The /content/ is domain-specific.
+
+sakshi v0.1 ships the structure with environmental-data content. Other
+domains can fork the doctrine and replace the content. The schema
+(~codev/schema.org~) is the seam where the content lives. The firewall
+(~codev/firewall.org~) is the seam where the enforcement lives. Both
+are deliberately small, so that forking is cheap.
+
+— /End of doctrine./

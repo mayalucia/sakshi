@@ -1,0 +1,34 @@
+step: synthetic-gapfill-b-broken
+mode: reconstruction-and-simulation
+description: |
+  This manifest is deliberately broken. The pipeline fills one gap with
+  a generative model (per-hour cyclic mean), but the manifest declares
+  the output as plain 'derived-from-measurement'. The 'synthesis' field
+  is therefore absent, but a downstream consumer would treat the column
+  as deterministically derived — the silent-promotion failure mode.
+
+  Expected firewall behaviour: B-class block. The
+  'derived-from-measurement | synthetic-acknowledged' compound is
+  required, with both 'derivation' and 'synthesis' fields populated.
+
+inputs:
+  - id: ../data/raw.csv
+    register: measurement
+
+outputs:
+  - id: ../data/gapfilled_synthetic.csv
+    register: derived-from-measurement
+    derivation: temporal-interpolation-linear-max-6h
+    description: |
+      INCORRECT manifest — the actual pipeline fills one gap with a
+      generative model. The 'synthesis' field is missing.
+
+llm_assistance:
+  level: pair-programmed
+  model: claude-opus-4-6
+  reviewer: i.iosifescu
+
+tests:
+  - test_id: test/test_synthetic.py::test_02_b_broken_blocks
+    description: |
+      Asserts the firewall blocks this manifest with a B-class failure.

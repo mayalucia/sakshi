@@ -1,0 +1,42 @@
+step: imis-daily-aggregate-wfj-flu-2024-02
+mode: reconstruction-and-simulation
+description: |
+  Compute daily mean and daily minimum air temperature per station from
+  the gap-filled hourly data. The output inherits the compound register
+  of the input (because it sums across both deterministic and synthetic
+  fills) and adds the aggregation derivation.
+
+inputs:
+  - id: gapfilled_imis.parquet
+    register:
+      - derived-from-measurement
+      - synthetic-acknowledged
+
+outputs:
+  - id: daily_imis.parquet
+    register:
+      - derived-from-measurement
+      - synthetic-acknowledged
+    derivation: daily-aggregation-mean-and-min
+    synthesis: inherited-from-input-gapfill
+    description: |
+      Daily mean and daily minimum per station. The compound register
+      is inherited from the input because the aggregation includes
+      hours whose values are synthetic-acknowledged. A 'n_synthetic'
+      column records how many of the day's hourly inputs were
+      synthetic, so a downstream consumer can decide whether to
+      include or exclude the day.
+
+llm_assistance:
+  level: none
+
+tests:
+  - test_id: test/test_imis.py::test_03_daily_aggregate_register_inherited
+    description: |
+      Asserts that the output's register is the compound, not just
+      'derived-from-measurement' — the synthesis ancestry must be
+      preserved through aggregation.
+  - test_id: test/test_imis.py::test_03_daily_aggregate_n_synthetic_correct
+    description: |
+      Asserts that the n_synthetic column counts the right number of
+      synthetic-acknowledged hourly inputs per day per station.
