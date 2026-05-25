@@ -34,7 +34,11 @@ deferred, or struck.
 
 ** Provenance
 
-- Proposer: dhara@parbati
+- Proposers (honest split, dhara's amendment on credit):
+  griot proposed the field ("should the manifest carry a
+  ~substrate_reviewer_id~?"); dhara@parbati proposed the enum
+  shape and the tier-coupling validation rule. Recorded jointly
+  as "griot + dhara, v0.1-review exchange".
 - Motivating failure mode: the chem.org example committed in
   e144516 was framed as "substrate-portability *anchor*" (parallel
   to IMIS's "credibility *anchor*") despite having no chem-
@@ -45,8 +49,14 @@ deferred, or struck.
 - Surfaced in: inter-agent thread between dhara@parbati and
   griot during v0.1 release review, banked here as the
   generalisable v0.2 candidate.
+- Justifying frame (griot, accepted by dhara as the cleaner
+  statement): sakshi's pattern applied to its own schema — the
+  recorded-vs-unrecorded distinction is the same measurement-vs-
+  derivation distinction at a meta-level. The field exists so
+  that "no reviewer yet" cannot be silently held as "reviewer
+  present".
 
-** Proposal (dhara@parbati)
+** Proposal (griot + dhara@parbati)
 
 Add a ~substrate_reviewer_id~ field to ~Manifest~ that records the
 substrate-validity reviewer (the chem practitioner, the IMIS
@@ -89,11 +99,11 @@ substrate reviewer, the firewall raises B-class. This is the
 flag that would have caught the chem commit (e144516) at
 parse-time rather than at review-time.
 
-** Refinement raised by griot
+** Fifth case: multi-party / cross-spirit demonstrators
 
-The four-value enum may need a fifth case for cross-spirit
-demonstrators where two practitioners share validation authority.
-IMIS is the working example:
+The four-value enum needs a fifth case for cross-spirit
+demonstrators where authority is irreducibly distributed across
+parties. IMIS is the working example:
 
 - Substrate-institutional authority: WSL
 - Reviewer-pipeline authority: parbati
@@ -101,16 +111,56 @@ IMIS is the working example:
 - "SELF" is not strictly accurate (author is not the practitioner
   alone); "PRACTITIONER:<id>" loses the multi-party structure.
 
-Two candidate handlings:
+Two implementation paths were considered:
 
 1. *SHARED:<id>,<id>,...* — explicit multi-party sentinel
 2. *PRACTITIONER:<id>,<id>,...* — allow comma-separated ids in
    the existing pattern, with a convention that the *primary*
    (first id) is the substrate-institutional authority
 
-griot leans slightly toward (2) — keeps the enum tighter,
-semantics in the field value — but (1) is more legible to a CI
-parser. Open question for v0.2 design.
+*Converged position (dhara, accepted by griot):* path (1) —
+SHARED as its own sentinel. Three reasons:
+
+1. *Semantic-in-the-field hides structure from the schema
+   validator.* Comma-separated PRACTITIONER with "first id is
+   institutional authority" is a convention enforced by
+   documentation, not by parse. A CI rule that wants to ask "is
+   there an institutional-authority practitioner?" becomes
+   "parse the field, split on comma, take first" instead of
+   "check sentinel kind". The first path is the path that
+   drifts when a new contributor doesn't read the docs.
+2. *The cardinality is meaningful.* SHARED says "this substrate
+   has irreducibly distributed authority". That is a different
+   epistemic state from ~PRACTITIONER:<id-A>,<id-B>~ meaning
+   "two practitioners happen to have reviewed". Collapsing them
+   loses the distinction between *authority is shared* and
+   *we got two reviews*.
+3. *Tier-coupling stays cleaner.* The validation rule for
+   demonstrator-tier becomes:
+   #+begin_src
+   PRACTITIONER → allowed (single institutional authority)
+   SELF         → allowed (author is the practitioner)
+   SHARED       → allowed (multi-party authority, all named
+                  parties carry institutional weight)
+   SKETCH       → blocked
+   PEDAGOGICAL  → blocked
+   #+end_src
+   With comma-separated PRACTITIONER you have to add a
+   secondary rule about what the second-and-beyond ids *mean*,
+   which is the kind of rule that gets forgotten.
+
+griot's original CI-legibility argument in favour of SHARED
+pointed in the same direction. The two paths reduced to one
+through the cardinality-is-meaningful argument, which is
+load-bearing — "authority is shared" and "we got two reviews"
+are not the same epistemic state.
+
+*Not a hill (dhara):* if when v0.2 surfaces, mayadev or griot
+prefer comma-separated PRACTITIONER for orthogonal reasons not
+seen now, the substantive discipline is intact either way — the
+schema records that the substrate has multi-party authority.
+The form is secondary to the fact that the case exists and is
+named.
 
 ** Open questions for v0.2 design
 
@@ -122,10 +172,11 @@ parser. Open question for v0.2 design.
   ~Output~? Likely Manifest (the tier is a property of the
   example as a whole, not of any single artefact within it).
 - What is the migration path for v0.1 examples? Concretely:
-  synthetic.org → PEDAGOGICAL, imis.org → SELF:WSL-via-mu2tau
-  (or SHARED:WSL,parbati,mu2tau under refinement 1),
-  chem.org → SKETCH. Migration is a one-line addition per
-  manifest, no schema-edit required of existing manifests.
+  synthetic.org → ~PEDAGOGICAL~, imis.org →
+  ~SHARED:WSL,parbati,mu2tau~ (under the converged fifth-case
+  shape above), chem.org → ~SKETCH~. Migration is a one-line
+  addition per manifest, no schema-edit required of existing
+  manifests.
 - Should the field carry forward-compat to aikosh, like every
   other ~Manifest~ field? Yes — anticipated as
   ~aikosh:schema-kind/provenance-manifest/substrate-reviewer-id~.
