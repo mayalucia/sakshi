@@ -45,10 +45,15 @@ inputs:
   - id: codev/examples/chem.org
     register: measurement
     description: |
-      The chemoinformatics worked example, literate. Demonstrates
-      sakshi's substrate-portability — the doctrine applied to a
-      small-molecule descriptor pipeline (SMILES → RDKit descriptors
-      → Lipinski Ro5 → templated SAR insight). Source-of-truth for
+      The chemoinformatics portability sketch, literate. Same
+      epistemic tier as synthetic.org — a pedagogical illustration,
+      not a credibility-anchored demonstrator. Claims that sakshi's
+      schema accommodates a molecule-as-graph topology (SMILES →
+      RDKit descriptors → Lipinski Ro5 → templated SAR insight)
+      without modification; does NOT claim sakshi has been validated
+      against chemoinformatics practice. No chem-practitioner
+      reviewer in v0.1. v0.2 will either find one (re-tier to
+      demonstrator) or retire the sketch. Source-of-truth for
       test/test_chem.py and test/chem/.
 
   - id: codev/dogfood.org

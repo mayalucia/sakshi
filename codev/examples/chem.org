@@ -1,13 +1,60 @@
 #+title: sakshi — Worked Example 3: Chemoinformatics Pipeline (Small-Molecule Descriptors)
-#+subtitle: The substrate-portability anchor — sakshi outside its native habitat
+#+subtitle: A portability sketch — schema accommodates a new topology; chem-practitioner review pending
 #+author: sakshi v0.1
 #+property: header-args:python :mkdirp yes
 #+startup: showall
 
+* Epistemic status — read this first
+
+This example is a *portability sketch*, not a credibility-anchored
+demonstrator. Three things to understand before reading further:
+
+1. *No chem-practitioner has reviewed this file.* The descriptor
+   pipeline calls real RDKit primitives, the SMILES are real public
+   compounds, and the Lipinski Ro5 formula is textbook. But the
+   /assembly/ of those pieces into a "chemoinformatics workflow"
+   has not been validated by anyone who actually does medicinal
+   chemistry or chemoinformatics for a living. The templated
+   "SAR insight" string in particular is a stub, not chemistry —
+   no medicinal chemist would write or read that string in a real
+   workflow.
+
+2. *The claim this example makes is narrow.* It claims: *sakshi's
+   schema accommodates a molecule-as-graph topology — distinct
+   from both sensor-point time series (IMIS) and raster stacks
+   (the v0.2 InSAR demonstrator) — without modification, using
+   only sakshi's generic vocabulary (register, derivation,
+   synthesis, mode).* That claim is structurally testable from the
+   manifest alone and is asserted in
+   ~test_chem_manifest_uses_no_chemistry_specific_schema_fields~.
+
+3. *The claim this example does NOT make.* It does not claim that
+   sakshi's discipline is /sufficient/ for chemoinformatics
+   pipelines, nor that the workflow assembled here is what a
+   Roche/CADD/medchem reviewer would consider a faithful
+   chemoinformatics workflow. A real chemoinformatics
+   demonstrator would need: a chem-practitioner reviewer, a
+   realistic dataset (not eight hand-picked textbook compounds),
+   and a synthesis layer that is /either/ an actual LLM call /or/ a
+   substantive descriptor-based prediction (not a templated
+   string). v0.1 has none of these.
+
+This sketch sits at the same epistemic tier as ~synthetic.org~ —
+both are pedagogical illustrations of the discipline. The
+credibility-anchored demonstrator in v0.1 is ~imis.org~, which
+has WSL behind the substrate and parbati behind the reviewer
+pipeline. v0.2 will either find a chem-practitioner reviewer
+(re-tiering this file to demonstrator) or retire the sketch.
+
+This honest framing is itself a sakshi-discipline move: refusing
+to silently promote a portability sketch into a demonstrator's
+epistemic register is exactly the kind of register-honesty
+sakshi's firewall is designed to enforce.
+
 * Purpose
 
-This file is the literate source of the chemoinformatics worked
-example. It ships:
+This file is the literate source of the chemoinformatics portability
+sketch. It ships:
 
 - A *small synthetic SMILES dataset* — eight Lipinski-friendly drug-like
   scaffolds drawn from public textbook chemistry (aspirin, ibuprofen,
@@ -31,11 +78,12 @@ example. It ships:
   asserts that the broken manifests fail with the expected B-class
   messages.
 
-** Why a chemoinformatics example, when sakshi was built for environmental data?
+** Why a chemoinformatics sketch, when sakshi was built for environmental data?
 
-sakshi's doctrine is a property of /scientific data pipelines under
-LLM pressure/, not of any single domain. The four-register firewall
-and the two-mode polymorphism apply identically whenever:
+sakshi's doctrine is /designed/ to be a property of scientific data
+pipelines under LLM pressure, not of any single domain. The
+four-register firewall and the two-mode polymorphism are intended
+to apply whenever:
 
 1. There is a measurement substrate (here: a SMILES string is a
    measurement of an actual chemical compound).
@@ -45,13 +93,21 @@ and the two-mode polymorphism apply identically whenever:
    outputs not anchored to the measurement (here: the
    "SAR-style insight" string).
 
-The chemoinformatics worked example exists to show this portability
-explicitly. If sakshi only ever demonstrates itself on its native
-substrate (environmental-sensor time series), a reader might fairly
-ask whether the discipline is a property of the doctrine or a
-property of the substrate. This example settles the question:
-*nothing in sakshi's schema or firewall mentions chemistry*. The
-manifests work because the doctrine is substrate-agnostic.
+This portability sketch exists to make that design intent /testable
+from the manifest structure alone/. If sakshi only ever illustrates
+itself on its native substrate (environmental-sensor time series), a
+reader might fairly ask whether the doctrine is substrate-neutral or
+just substrate-hidden. The sketch makes the question concrete: the
+chem manifest uses only sakshi's generic vocabulary (register,
+derivation, synthesis, mode), and the
+~test_chem_manifest_uses_no_chemistry_specific_schema_fields~ test
+makes that claim falsifiable. /Nothing in sakshi's schema or firewall
+mentions chemistry./
+
+What this sketch does *not* establish: that sakshi's discipline is
+sufficient for actual chemoinformatics practice. That would require
+a chem-practitioner reviewer, which v0.1 does not have. See the
+"Epistemic status" section above.
 
 ** What this example does NOT do
 
@@ -636,16 +692,20 @@ def test_chem_manifest_uses_no_chemistry_specific_schema_fields():
     )
 #+end_src
 
-* What this example demonstrates
+* What this sketch demonstrates (and what it does not)
 
-Concretely, the chemoinformatics worked example demonstrates:
+Concretely, the chemoinformatics portability sketch demonstrates:
 
-1. *Substrate portability*. sakshi's doctrine is a property of the
-   /shape/ of scientific data pipelines, not of any specific domain.
-   The chem manifests work because they use only generic vocabulary
-   (register, derivation, synthesis, mode). The test
+1. *Schema accommodates a new topology*. sakshi's schema is /designed/
+   as a property of the shape of scientific data pipelines, not of
+   any specific domain. The chem manifests parse and validate using
+   only generic vocabulary (register, derivation, synthesis, mode).
+   The test
    ~test_chem_manifest_uses_no_chemistry_specific_schema_fields~
-   makes this claim falsifiable.
+   makes this structural claim falsifiable. This is a claim about
+   the schema, not about chemistry: it does not establish that
+   sakshi's discipline is /sufficient/ for chemoinformatics, only
+   that it does not /obstruct/ the substrate.
 
 2. *The synthetic-acknowledged register is the honest answer*. The
    "SAR insight" layer is a templated string in this example and
