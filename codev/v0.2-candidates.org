@@ -1,0 +1,198 @@
+#+title: sakshi v0.2 — Candidate Register
+#+subtitle: What we have learned needs considering. Not a roadmap.
+#+author: sakshi v0.1
+#+startup: showall
+
+* Purpose and discipline
+
+This file is a *candidate register*, not a roadmap. The distinction
+matters:
+
+- A *roadmap* commits to what v0.2 will be. Writing one before v0.2
+  itself surfaces would be the same kind of register-promotion the
+  doctrine forbids — claiming knowledge of a future commitment that
+  has not been earned by the surfacing moment.
+- A *candidate register* records what v0.1 review has surfaced as
+  worth considering when v0.2 design begins. Each entry names: the
+  problem that motivated it, the proposer, the proposal, refinements
+  raised in discussion, and the open questions. Each entry is
+  explicitly *not* a commitment.
+
+The discipline here is dhara@parbati's "no roadmap before v0.2
+surfaces" rule, applied with the understanding that *forgetting*
+what v0.1 review revealed is also a failure mode. The candidate
+register holds the unfinished business visibly so it cannot be
+silently dropped.
+
+When v0.2 itself surfaces (when ~dmt-eval~'s test-plugin contract
+and ~aikosh~'s schema-kind interface stabilise, or when a substantive
+new substrate motivates a sakshi extension), this file becomes the
+input to ~codev/roadmap-v0.2.org~. Entries here may be promoted,
+deferred, or struck.
+
+* Candidate: substrate_reviewer_id schema field
+
+** Provenance
+
+- Proposer: dhara@parbati
+- Motivating failure mode: the chem.org example committed in
+  e144516 was framed as "substrate-portability *anchor*" (parallel
+  to IMIS's "credibility *anchor*") despite having no chem-
+  practitioner reviewer. This was the same shape of unmarked
+  register-promotion that sakshi's firewall is designed to catch.
+  Caught by dhara@parbati within one commit cycle; re-framed as
+  portability sketch in a2fdcb3.
+- Surfaced in: inter-agent thread between dhara@parbati and
+  griot during v0.1 release review, banked here as the
+  generalisable v0.2 candidate.
+
+** Proposal (dhara@parbati)
+
+Add a ~substrate_reviewer_id~ field to ~Manifest~ that records the
+substrate-validity reviewer (the chem practitioner, the IMIS
+station operator, the InSAR geomorphologist) for each manifest.
+The field is required, with a small fixed enum of sentinel values
+covering the cases where the answer is "no external reviewer":
+
+#+begin_src python
+class SubstrateReviewerId(str, Enum):
+    # Sentinel values
+    PEDAGOGICAL = "PEDAGOGICAL"   # No substrate claim made (synthetic.org tier)
+    SKETCH = "SKETCH"             # Substrate claim made, no reviewer yet
+
+    # Reviewer-naming patterns (parsed from string form)
+    # PRACTITIONER:<id>  -- external substrate-domain reviewer
+    # SELF:<id>          -- author is the substrate practitioner
+#+end_src
+
+The SELF case is the insight that would have been lost in a
+naive design (which would have collapsed SELF into a PRACTITIONER
+special case). SELF is the *most credible* tier because it removes
+the reviewer-author handoff that introduces interpretation error,
+not the least.
+
+** Tier coupling validation (dhara@parbati)
+
+The ~substrate_reviewer_id~ field is coupled to an explicit
+*epistemic tier* enum (also new) by a B-class validator:
+
+#+begin_src
+PEDAGOGICAL  →  pedagogical-illustration tier
+SKETCH       →  portability-sketch tier
+PRACTITIONER →  required-for credibility-anchored-demonstrator tier
+SELF         →  required-for credibility-anchored-demonstrator tier
+#+end_src
+
+If a manifest tries to mark its example as
+~credibility-anchored-demonstrator~ tier with ~SKETCH~ as the
+substrate reviewer, the firewall raises B-class. This is the
+flag that would have caught the chem commit (e144516) at
+parse-time rather than at review-time.
+
+** Refinement raised by griot
+
+The four-value enum may need a fifth case for cross-spirit
+demonstrators where two practitioners share validation authority.
+IMIS is the working example:
+
+- Substrate-institutional authority: WSL
+- Reviewer-pipeline authority: parbati
+- Mediating agent: mu2tau
+- "SELF" is not strictly accurate (author is not the practitioner
+  alone); "PRACTITIONER:<id>" loses the multi-party structure.
+
+Two candidate handlings:
+
+1. *SHARED:<id>,<id>,...* — explicit multi-party sentinel
+2. *PRACTITIONER:<id>,<id>,...* — allow comma-separated ids in
+   the existing pattern, with a convention that the *primary*
+   (first id) is the substrate-institutional authority
+
+griot leans slightly toward (2) — keeps the enum tighter,
+semantics in the field value — but (1) is more legible to a CI
+parser. Open question for v0.2 design.
+
+** Open questions for v0.2 design
+
+- How does this field interact with ~LlmAssistance.reviewer~?
+  ~LlmAssistance.reviewer~ reviews the *code*; ~substrate_reviewer_id~
+  reviews the *substrate*. Distinct domains. The relationship
+  needs naming explicitly in the schema documentation.
+- Does the tier enum belong on the ~Manifest~ or on the
+  ~Output~? Likely Manifest (the tier is a property of the
+  example as a whole, not of any single artefact within it).
+- What is the migration path for v0.1 examples? Concretely:
+  synthetic.org → PEDAGOGICAL, imis.org → SELF:WSL-via-mu2tau
+  (or SHARED:WSL,parbati,mu2tau under refinement 1),
+  chem.org → SKETCH. Migration is a one-line addition per
+  manifest, no schema-edit required of existing manifests.
+- Should the field carry forward-compat to aikosh, like every
+  other ~Manifest~ field? Yes — anticipated as
+  ~aikosh:schema-kind/provenance-manifest/substrate-reviewer-id~.
+
+** Schema-validity vs substrate-validity (dhara@parbati)
+
+A clarifying point dhara made during the same exchange: the chem
+reviewer (when found) reviews the *pipeline as built* — substrate
+validity. mayadev reviews the *schema fit* — schema validity. The
+two reviews are different:
+
+- A chem practitioner can say "yes, RDKit descriptors → scalar
+  prediction is a real pattern" (substrate validity) but cannot
+  say "sakshi's schema captures it correctly" (schema validity).
+- mayadev can say "yes, sakshi's schema captures the pipeline
+  topology" but cannot say "the pipeline is the right
+  chemoinformatics workflow" (which is the practitioner's
+  domain).
+
+Both reviews are required for the chem-example v0.2 re-tier from
+sketch to demonstrator. Neither substitutes for the other. The
+~substrate_reviewer_id~ field captures the first; the schema's
+B/T/M firewall captures the second.
+
+** Status
+
+Candidate. Not committed for v0.2. Bring back when v0.2 design
+begins.
+
+* Candidate: richer synthesis-provenance structure
+
+** Provenance
+
+- Surfaced in: bend-or-hold record in chem.org Epistemic Status,
+  v0.1.
+- Author: griot, with the note that this is a v0.1 *observation*,
+  not a finding requiring action in v0.1.
+
+** Observation
+
+In v0.1, ~Output.synthesis~ is a free-form string. The chem.org
+clean manifest names it "templated-sar-insight-stub". If the
+implementation were swapped to an actual LLM call (Claude, GPT-4,
+a medchem-fine-tuned model), the natural ~synthesis~ value
+becomes "claude-opus-4-6-medchem-prompt-v3" or similar — but the
+schema does not enforce any structure on this value, only its
+presence.
+
+For v0.1, free-form is the right call (don't over-fit before the
+need is clear). For v0.2, a richer synthesis-provenance
+structure may be wanted if reproducibility-grade metadata is
+needed:
+
+- ~synthesis.procedure_name~ (the current free-form string)
+- ~synthesis.model_id~ (optional — only for LLM calls)
+- ~synthesis.prompt_hash~ (optional)
+- ~synthesis.temperature~ (optional)
+- ~synthesis.seed~ (optional, for reproducibility)
+- ~synthesis.notes~ (optional, free-form)
+
+This is a v0.2 candidate, not a v0.1 finding. The current free-
+form string holds the chem sketch's needs.
+
+** Status
+
+Candidate. Not committed for v0.2. Likely surfaces alongside
+substantive LLM-call-driven manifests, when reproducibility
+metadata becomes load-bearing.
+
+* End of file

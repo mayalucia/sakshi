@@ -51,6 +51,103 @@ to silently promote a portability sketch into a demonstrator's
 epistemic register is exactly the kind of register-honesty
 sakshi's firewall is designed to enforce.
 
+** Bend-or-hold record: what did and did not strain when chem was assembled
+
+The narrow claim "sakshi's schema accommodates a molecule-as-graph
+topology without modification" is the kind of claim that is easy to
+make by *silence* — by the absence of any schema edit. Silence is
+not evidence. This subsection makes the bend-or-hold record
+explicit, so a reader can falsify it rather than infer it.
+
+*** What did NOT need to be added
+
+- No new ~Register~ enum value. The four-register firewall
+  (~measurement~, ~derived-from-measurement~, ~synthetic-acknowledged~,
+  ~expression-mode~) carried the chem pipeline unchanged. SMILES is
+  measurement, descriptors and Lipinski violations are
+  derived-from-measurement, the templated SAR insight is
+  synthetic-acknowledged. No fifth register surfaced.
+- No new ~Mode~ enum value. ~reconstruction-and-simulation~
+  accommodated the workflow; ~expression~ was not needed because
+  the chem example is not a rendering for human-perception
+  consumption (no figure-rendering step).
+- No new ~Output~ field. ~derivation~ named "rdkit-descriptor-suite-v2024"
+  and "lipinski-ro5-violation-count" cleanly; ~synthesis~ named
+  "templated-sar-insight-stub" cleanly. The existing
+  ~re_measurement~ field was not needed (no expression-mode inputs).
+- No new ~Input~ field. The SMILES dataset is a single
+  measurement-tagged input; no new metadata required.
+- No new validator. The existing ~Manifest._check_doctrine~
+  validators caught the two broken-by-construction chem manifests
+  with their existing B-class raises (missing-derivation,
+  missing-synthesis).
+- No widening of the ~LlmAssistance~ vocabulary. The chem clean
+  manifest uses ~level: none~ (the templated stub is not LLM-
+  authored code); the IMIS-style gap-fill manifest pattern with
+  ~level: pair-programmed~ would carry to a future chem manifest
+  without change.
+
+*** What DID strain (held under strain, but worth naming)
+
+- *The compound register tag carried the load.* In the chem
+  pipeline as built, no single output needed a compound register
+  (each output is either ~derived-from-measurement~ or
+  ~synthetic-acknowledged~, not both). But the design space tested
+  the compound tag: had the SAR-insight layer been written to
+  output a dataframe with /both/ deterministic descriptors and
+  templated insights in one artefact, the compound tag
+  ~[derived-from-measurement, synthetic-acknowledged]~ would have
+  been required, and the schema would have demanded /both/
+  ~derivation~ /and/ ~synthesis~ fields. The fact that this works
+  out-of-the-box is a non-trivial design property of the v0.1
+  schema. Worth naming as "tested in design, held".
+- *The synthesis-field naming convention strained against the
+  templated-stub-vs-LLM distinction.* In v0.1, the ~synthesis~
+  field is a free-form string. The clean chem manifest names it
+  "templated-sar-insight-stub". If the implementation were swapped
+  to an actual LLM call, the natural ~synthesis~ value becomes
+  something like "claude-opus-4-6-medchem-prompt-v3" — but the
+  /register/ stays ~synthetic-acknowledged~. The schema does not
+  enforce any structure on the synthesis field's value, only its
+  presence. This is the right call for v0.1 (don't over-fit), but
+  it is worth noting that a v0.2 reviewer might want richer
+  synthesis-provenance (model id, prompt hash, temperature, etc.).
+  That is a candidate v0.2 enrichment, not a v0.1 finding.
+
+*** What would NEED to bend if chem were re-tiered to demonstrator
+
+This is forward-looking — the actual schema-design discussion
+belongs in v0.2-thinking-time, not here, but naming the likely
+bend points so they are not surprises:
+
+- A ~substrate_reviewer_id~ field (or equivalent) would likely
+  need to be added to ~Manifest~, so the absence of a chem-
+  practitioner reviewer is *recorded* rather than implicit. This
+  is dhara@parbati's proposal raised in the v0.1 review of this
+  file; banked into ~codev/v0.2-candidates.org~ as a candidate,
+  not a commitment.
+- A richer synthesis-provenance structure (see above) may be
+  needed if the templated stub is replaced with an actual LLM
+  call and the schema needs to capture reproducibility metadata.
+- No other bend points have surfaced.
+
+*** Honest summary
+
+The portability-sketch claim held. No schema field, register
+enum, mode enum, or validator needed modification to accommodate
+the chem pipeline as built. The compound register tag was tested
+in design (would have worked) but not used in the final
+implementation. The synthesis field's free-form string
+convention held but may need enrichment if chem is later re-
+tiered to demonstrator.
+
+The schema-validity question — "is what sakshi captures
+*correct* for chemoinformatics?" — is mayadev's domain and
+remains open. The substrate-validity question — "is this a
+real chemoinformatics pattern?" — is the chem-practitioner's
+domain and remains open. The bend-or-hold record above
+addresses neither; it addresses only schema-accommodation.
+
 * Purpose
 
 This file is the literate source of the chemoinformatics portability

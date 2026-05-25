@@ -72,6 +72,20 @@ inputs:
     description: |
       The v0.2 fold-in roadmap.
 
+  - id: codev/v0.2-candidates.org
+    register: measurement
+    description: |
+      The v0.2 candidate register. Records what v0.1 review has
+      surfaced as worth considering when v0.2 design begins.
+      Explicitly NOT a roadmap — candidates may be promoted,
+      deferred, or struck. Holds the unfinished business visibly
+      so it cannot be silently dropped. v0.1 entries:
+      substrate_reviewer_id schema field (proposer:
+      dhara@parbati, motivated by the chem-as-demonstrator
+      register-promotion caught in e144516); richer synthesis-
+      provenance structure (observer: griot, surfaced in chem.org
+      bend-or-hold record).
+
 outputs:
   - id: src/sakshi/schema.py
     register: derived-from-measurement
