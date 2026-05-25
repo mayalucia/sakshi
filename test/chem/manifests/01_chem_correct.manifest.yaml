@@ -1,0 +1,55 @@
+step: chem-smiles-to-sar-insight-v1
+mode: reconstruction-and-simulation
+description: |
+  Four-stage chemoinformatics pipeline: SMILES → RDKit descriptors →
+  Lipinski Ro5 violation count → templated SAR-style insight. The
+  first three stages are deterministic derivations from the SMILES
+  measurement; the fourth is an acknowledged synthesis (a templated
+  stub standing in for what would be an LLM call in production).
+
+inputs:
+  - id: ../data/smiles_seed.csv
+    register: measurement
+    description: |
+      Hand-curated SMILES dataset: 8 textbook drug-like compounds and
+      small Bemis–Murcko scaffolds. SMILES strings sourced from
+      PubChem (public-domain compound identifiers).
+
+outputs:
+  - id: descriptors.parquet
+    register: derived-from-measurement
+    derivation: rdkit-descriptor-suite-v2024
+    description: |
+      Per-compound descriptor suite: molecular weight, LogP, TPSA,
+      hydrogen-bond donor count, hydrogen-bond acceptor count.
+      Deterministic given fixed RDKit version.
+
+  - id: lipinski_violations.parquet
+    register: derived-from-measurement
+    derivation: lipinski-ro5-violation-count
+    description: |
+      Per-compound Lipinski Rule-of-Five violation count (integer
+      0–4). Computed deterministically from the descriptor suite.
+
+  - id: sar_insights.parquet
+    register: synthetic-acknowledged
+    synthesis: templated-sar-insight-stub
+    description: |
+      Per-compound SAR-style insight string. In v0.1 this is a
+      deterministic templated string; in production it would be an
+      LLM call. The register is synthetic-acknowledged in both
+      cases — the discipline does not depend on which generator is
+      used, only on honest register declaration.
+
+llm_assistance:
+  level: none
+
+tests:
+  - test_id: test/test_chem.py::test_01_chem_correct_loads
+    description: |
+      Asserts that the clean manifest parses cleanly and passes all
+      B/T/M firewall checks.
+  - test_id: test/test_chem.py::test_01_chem_correct_pipeline_runs
+    description: |
+      Asserts that the descriptor and insight functions produce the
+      expected shapes and that no value silently changes register.

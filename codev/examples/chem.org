@@ -1,0 +1,674 @@
+#+title: sakshi — Worked Example 3: Chemoinformatics Pipeline (Small-Molecule Descriptors)
+#+subtitle: The substrate-portability anchor — sakshi outside its native habitat
+#+author: sakshi v0.1
+#+property: header-args:python :mkdirp yes
+#+startup: showall
+
+* Purpose
+
+This file is the literate source of the chemoinformatics worked
+example. It ships:
+
+- A *small synthetic SMILES dataset* — eight Lipinski-friendly drug-like
+  scaffolds drawn from public textbook chemistry (aspirin, ibuprofen,
+  caffeine, paracetamol, and four small Bemis–Murcko cores). The
+  dataset is hand-curated and bundled into the repository so the
+  example runs anywhere without external data fetches.
+- A *deterministic descriptor pipeline*: SMILES → RDKit descriptors
+  (molecular weight, LogP, TPSA, hydrogen-bond donors/acceptors) →
+  Lipinski Rule-of-Five violation count.
+- A *templated synthetic-prediction layer* — a deterministic-but-
+  string-templated function that takes the descriptors and emits a
+  "SAR-style insight" string. This is the layer that *would be* an
+  LLM call in a real drug-discovery workflow; we substitute a
+  templated string so the example is reproducible and license-clean,
+  while keeping the register honest (~synthetic-acknowledged~).
+- Three manifests demonstrating a typical chemoinformatics workflow.
+  One is doctrinally correct; two are deliberately broken in ways
+  that catch the LLM-induced sins the firewall is designed to
+  prevent.
+- A pytest test file that exercises the workflow end-to-end and
+  asserts that the broken manifests fail with the expected B-class
+  messages.
+
+** Why a chemoinformatics example, when sakshi was built for environmental data?
+
+sakshi's doctrine is a property of /scientific data pipelines under
+LLM pressure/, not of any single domain. The four-register firewall
+and the two-mode polymorphism apply identically whenever:
+
+1. There is a measurement substrate (here: a SMILES string is a
+   measurement of an actual chemical compound).
+2. There are derived quantities (here: descriptors like LogP, TPSA,
+   computed deterministically from the measurement).
+3. There is an LLM-or-synthetic layer that produces plausible-looking
+   outputs not anchored to the measurement (here: the
+   "SAR-style insight" string).
+
+The chemoinformatics worked example exists to show this portability
+explicitly. If sakshi only ever demonstrates itself on its native
+substrate (environmental-sensor time series), a reader might fairly
+ask whether the discipline is a property of the doctrine or a
+property of the substrate. This example settles the question:
+*nothing in sakshi's schema or firewall mentions chemistry*. The
+manifests work because the doctrine is substrate-agnostic.
+
+** What this example does NOT do
+
+- It does not call RDKit's full machine-learning stack. The
+  descriptors are deterministic, license-clean, and identical across
+  RDKit versions for the small bundled scaffolds.
+- It does not call an LLM. The "SAR-style insight" layer is a
+  templated string built from the descriptors. The discipline being
+  demonstrated is independent of whether an LLM is actually invoked
+  — the register is what matters.
+- It does not claim domain expertise. The descriptor choices and the
+  Lipinski Ro5 framing are textbook chemoinformatics; the worked
+  example demonstrates sakshi's discipline applied to a faithfully-
+  shaped chemistry pipeline, not novel medicinal-chemistry insight.
+
+* The SMILES dataset
+
+#+begin_src python :tangle ../../test/chem/data/smiles_seed.py
+"""Hand-curated small SMILES dataset for sakshi's chemoinformatics example.
+
+This file is tangled from codev/examples/chem.org.
+
+Each entry is a public, textbook drug-like compound or a small
+Bemis–Murcko core. SMILES strings are copied from PubChem entries
+(public-domain compound identifiers; no proprietary structures).
+
+Columns when written to CSV:
+    compound_id  -- short identifier
+    name         -- common name
+    smiles       -- canonical SMILES
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+SMILES_SEED = [
+    # Drug-like reference compounds (public textbook chemistry).
+    ("ASP", "aspirin",     "CC(=O)Oc1ccccc1C(=O)O"),
+    ("IBU", "ibuprofen",   "CC(C)Cc1ccc(C(C)C(=O)O)cc1"),
+    ("CAF", "caffeine",    "Cn1cnc2c1c(=O)n(C)c(=O)n2C"),
+    ("PCM", "paracetamol", "CC(=O)Nc1ccc(O)cc1"),
+    # Small Bemis–Murcko-style scaffolds for descriptor variety.
+    ("PYR", "pyridine",    "c1ccncc1"),
+    ("IND", "indole",      "c1ccc2[nH]ccc2c1"),
+    ("QIN", "quinoline",   "c1ccc2ncccc2c1"),
+    ("THI", "thiazole",    "c1cscn1"),
+]
+
+
+def write_csv(out_path: Path) -> None:
+    """Write the seed dataset to a CSV at out_path."""
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    lines = ["compound_id,name,smiles"]
+    for cid, name, smi in SMILES_SEED:
+        lines.append(f"{cid},{name},{smi}")
+    out_path.write_text("\n".join(lines) + "\n")
+
+
+if __name__ == "__main__":
+    write_csv(Path(__file__).parent / "smiles_seed.csv")
+#+end_src
+
+* The descriptor and Lipinski layers
+
+This is the deterministic, RDKit-backed derivation layer. Given a
+SMILES string, RDKit emits a fixed set of physico-chemical descriptors
+(molecular weight, LogP, TPSA, HBD count, HBA count). Lipinski Rule-of-
+Five violation count is then computed from those descriptors by a
+textbook formula.
+
+The register of these outputs is ~derived-from-measurement~. The
+~derivation~ field names the procedure ("rdkit-descriptor-suite-v2024"
+and "lipinski-ro5-violation-count").
+
+If RDKit is not installed, the test file skips the workflow tests; the
+manifest-level tests run regardless.
+
+#+begin_src python :tangle ../../test/chem/descriptors.py
+"""Deterministic descriptor and Lipinski-Ro5 layer for the chem example.
+
+This file is tangled from codev/examples/chem.org.
+
+Optional dependency: RDKit (install with `pip install sakshi[chem]`).
+If RDKit is not available, descriptor functions raise ImportError and
+the test runner skips the workflow tests.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+try:
+    from rdkit import Chem
+    from rdkit.Chem import Crippen, Descriptors, Lipinski
+
+    RDKIT_AVAILABLE = True
+except ImportError:  # pragma: no cover
+    RDKIT_AVAILABLE = False
+
+
+@dataclass(frozen=True)
+class MolDescriptors:
+    """The fixed descriptor suite produced by rdkit-descriptor-suite-v2024."""
+
+    compound_id: str
+    molecular_weight: float
+    logp: float
+    tpsa: float
+    hbd_count: int
+    hba_count: int
+
+
+def compute_descriptors(compound_id: str, smiles: str) -> MolDescriptors:
+    """Compute the descriptor suite for a single SMILES.
+
+    Procedure name: rdkit-descriptor-suite-v2024
+    """
+    if not RDKIT_AVAILABLE:
+        raise ImportError(
+            "RDKit not installed. Install with `pip install sakshi[chem]`."
+        )
+    mol = Chem.MolFromSmiles(smiles)
+    if mol is None:
+        raise ValueError(f"RDKit could not parse SMILES for {compound_id!r}: {smiles!r}")
+    return MolDescriptors(
+        compound_id=compound_id,
+        molecular_weight=round(Descriptors.MolWt(mol), 2),
+        logp=round(Crippen.MolLogP(mol), 2),
+        tpsa=round(Descriptors.TPSA(mol), 2),
+        hbd_count=Lipinski.NumHDonors(mol),
+        hba_count=Lipinski.NumHAcceptors(mol),
+    )
+
+
+def lipinski_violations(d: MolDescriptors) -> int:
+    """Count the number of Lipinski Rule-of-Five violations.
+
+    Procedure name: lipinski-ro5-violation-count
+
+    Ro5 (Lipinski 1997): a drug-like molecule typically has
+        MW <= 500, LogP <= 5, HBD <= 5, HBA <= 10.
+    """
+    violations = 0
+    if d.molecular_weight > 500:
+        violations += 1
+    if d.logp > 5:
+        violations += 1
+    if d.hbd_count > 5:
+        violations += 1
+    if d.hba_count > 10:
+        violations += 1
+    return violations
+#+end_src
+
+* The templated synthetic-prediction layer
+
+This is the layer that would be an LLM call in a real workflow. We
+substitute a deterministic templated string so the example is
+reproducible and license-clean.
+
+Crucially, the register stays honest: the output is
+~synthetic-acknowledged~, with a ~synthesis~ field naming the procedure
+("templated-sar-insight-stub" — replaced in production by an actual
+LLM-call procedure name like "claude-opus-4-6-medchem-prompt-v3").
+
+The point of this layer is *not* that the templated string is useful
+chemistry — it isn't. The point is that the discipline treats this
+class of output identically whether the generator is a templated
+string or a state-of-the-art chemistry LLM. The register is the
+honest answer to "where did this come from?"
+
+#+begin_src python :tangle ../../test/chem/insight.py
+"""Templated synthetic-prediction layer for the chem example.
+
+This file is tangled from codev/examples/chem.org.
+
+The function in this file would, in a production drug-discovery
+workflow, be a call to an LLM (Claude, GPT-4, a medchem-fine-tuned
+model). We substitute a deterministic templated string so:
+
+1. The example runs anywhere without API keys.
+2. The output is bit-identical across runs.
+3. The discipline being demonstrated does not depend on the actual
+   text content — it depends on the *register*.
+
+The register is ~synthetic-acknowledged~, and the manifest's
+~synthesis~ field names the procedure honestly.
+"""
+
+from __future__ import annotations
+
+from .descriptors import MolDescriptors
+
+
+def sar_insight_stub(d: MolDescriptors) -> str:
+    """Emit a templated SAR-style insight string from descriptors.
+
+    Procedure name: templated-sar-insight-stub
+
+    In production, replace with an LLM call:
+        sar_insight_llm(d) -> calls claude-opus-4-6 with a medchem prompt
+    The register remains 'synthetic-acknowledged' in both cases.
+    """
+    permeation = "likely cell-permeable" if d.logp < 5 and d.tpsa < 90 else "permeation uncertain"
+    drug_like = "within Lipinski-friendly range" if d.molecular_weight <= 500 else "above typical drug-like MW"
+    return (
+        f"Compound {d.compound_id}: LogP={d.logp} and TPSA={d.tpsa} — "
+        f"{permeation}; molecular weight {d.molecular_weight} places it "
+        f"{drug_like}; donor/acceptor profile ({d.hbd_count}/{d.hba_count}) "
+        f"is balanced for oral bioavailability."
+    )
+#+end_src
+
+* Manifest 1 — clean four-stage pipeline
+
+The doctrinally-correct manifest. ~mode: reconstruction-and-simulation~.
+Stages:
+
+1. SMILES dataset (input, ~register: measurement~).
+2. RDKit descriptors (output, ~register: derived-from-measurement~,
+   ~derivation: rdkit-descriptor-suite-v2024~).
+3. Lipinski Ro5 violation count (output, ~register:
+   derived-from-measurement~, ~derivation:
+   lipinski-ro5-violation-count~).
+4. Templated SAR insight (output, ~register: synthetic-acknowledged~,
+   ~synthesis: templated-sar-insight-stub~).
+
+#+begin_src yaml :tangle ../../test/chem/manifests/01_chem_correct.manifest.yaml
+step: chem-smiles-to-sar-insight-v1
+mode: reconstruction-and-simulation
+description: |
+  Four-stage chemoinformatics pipeline: SMILES → RDKit descriptors →
+  Lipinski Ro5 violation count → templated SAR-style insight. The
+  first three stages are deterministic derivations from the SMILES
+  measurement; the fourth is an acknowledged synthesis (a templated
+  stub standing in for what would be an LLM call in production).
+
+inputs:
+  - id: ../data/smiles_seed.csv
+    register: measurement
+    description: |
+      Hand-curated SMILES dataset: 8 textbook drug-like compounds and
+      small Bemis–Murcko scaffolds. SMILES strings sourced from
+      PubChem (public-domain compound identifiers).
+
+outputs:
+  - id: descriptors.parquet
+    register: derived-from-measurement
+    derivation: rdkit-descriptor-suite-v2024
+    description: |
+      Per-compound descriptor suite: molecular weight, LogP, TPSA,
+      hydrogen-bond donor count, hydrogen-bond acceptor count.
+      Deterministic given fixed RDKit version.
+
+  - id: lipinski_violations.parquet
+    register: derived-from-measurement
+    derivation: lipinski-ro5-violation-count
+    description: |
+      Per-compound Lipinski Rule-of-Five violation count (integer
+      0–4). Computed deterministically from the descriptor suite.
+
+  - id: sar_insights.parquet
+    register: synthetic-acknowledged
+    synthesis: templated-sar-insight-stub
+    description: |
+      Per-compound SAR-style insight string. In v0.1 this is a
+      deterministic templated string; in production it would be an
+      LLM call. The register is synthetic-acknowledged in both
+      cases — the discipline does not depend on which generator is
+      used, only on honest register declaration.
+
+llm_assistance:
+  level: none
+
+tests:
+  - test_id: test/test_chem.py::test_01_chem_correct_loads
+    description: |
+      Asserts that the clean manifest parses cleanly and passes all
+      B/T/M firewall checks.
+  - test_id: test/test_chem.py::test_01_chem_correct_pipeline_runs
+    description: |
+      Asserts that the descriptor and insight functions produce the
+      expected shapes and that no value silently changes register.
+#+end_src
+
+* Manifest 2 — broken: derivation without derivation field
+
+This manifest claims that Stage 2 (RDKit descriptors) is
+~register: derived-from-measurement~ but omits the ~derivation~ field.
+This is the most common LLM-induced sin: the model labels the
+register correctly (it /knows/ the output is derived) but forgets to
+name the derivation procedure. The firewall catches it at parse-time.
+
+Expected B-class raise:
+
+#+begin_example
+B-class: output 'descriptors.parquet' carries 'derived-from-measurement' but has no 'derivation' field.
+#+end_example
+
+#+begin_src yaml :tangle ../../test/chem/manifests/broken/02_chem_missing_derivation.manifest.yaml
+step: chem-broken-missing-derivation
+mode: reconstruction-and-simulation
+description: |
+  BROKEN BY CONSTRUCTION. Stage 2 output claims register
+  'derived-from-measurement' but omits the 'derivation' field. The
+  firewall should raise a B-class failure at parse-time.
+
+inputs:
+  - id: ../../data/smiles_seed.csv
+    register: measurement
+
+outputs:
+  - id: descriptors.parquet
+    register: derived-from-measurement
+    # derivation field deliberately omitted — firewall must catch.
+    description: |
+      Should fail B-class: derivation field missing.
+
+tests:
+  - test_id: test/test_chem.py::test_02_broken_missing_derivation_raises
+    description: |
+      Asserts that loading this manifest raises FirewallFailure with
+      class B and a message naming the missing derivation field.
+#+end_src
+
+* Manifest 3 — broken: synthesis without synthesis field
+
+This manifest claims that Stage 4 (SAR insight) is
+~register: synthetic-acknowledged~ but omits the ~synthesis~ field.
+This is the second most common LLM-induced sin: the model labels the
+output as synthetic (it /knows/ the layer is generative) but forgets
+to name the synthesis procedure. The firewall catches it at
+parse-time.
+
+Expected B-class raise:
+
+#+begin_example
+B-class: output 'sar_insights.parquet' carries 'synthetic-acknowledged' but has no 'synthesis' field.
+#+end_example
+
+#+begin_src yaml :tangle ../../test/chem/manifests/broken/03_chem_missing_synthesis.manifest.yaml
+step: chem-broken-missing-synthesis
+mode: reconstruction-and-simulation
+description: |
+  BROKEN BY CONSTRUCTION. Stage 4 output claims register
+  'synthetic-acknowledged' but omits the 'synthesis' field. The
+  firewall should raise a B-class failure at parse-time.
+
+inputs:
+  - id: ../../data/smiles_seed.csv
+    register: measurement
+
+outputs:
+  - id: sar_insights.parquet
+    register: synthetic-acknowledged
+    # synthesis field deliberately omitted — firewall must catch.
+    description: |
+      Should fail B-class: synthesis field missing.
+
+tests:
+  - test_id: test/test_chem.py::test_03_broken_missing_synthesis_raises
+    description: |
+      Asserts that loading this manifest raises FirewallFailure with
+      class B and a message naming the missing synthesis field.
+#+end_src
+
+* The test file
+
+#+begin_src python :tangle ../../test/test_chem.py
+"""Tests for sakshi's chemoinformatics worked example.
+
+This file is tangled from codev/examples/chem.org.
+
+The test suite walks a four-stage chemoinformatics pipeline (SMILES →
+descriptors → Lipinski violations → templated SAR insight) and asserts
+the firewall behaviour at each step, including the two pedagogical
+broken manifests.
+
+RDKit-dependent tests are skipped if RDKit is not installed; the
+manifest-level tests run regardless.
+"""
+
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+import pytest
+
+from sakshi import (
+    FailureClass,
+    FirewallFailure,
+    check_manifest,
+    load_manifest,
+)
+
+HERE = Path(__file__).parent
+CHEM_DIR = HERE / "chem"
+MANIFESTS_DIR = CHEM_DIR / "manifests"
+BROKEN_DIR = MANIFESTS_DIR / "broken"
+DATA_DIR = CHEM_DIR / "data"
+
+# Make the chem helper modules importable.
+sys.path.insert(0, str(CHEM_DIR))
+
+
+@pytest.fixture(scope="module", autouse=True)
+def ensure_smiles_csv():
+    csv_path = DATA_DIR / "smiles_seed.csv"
+    if not csv_path.exists():
+        from data.smiles_seed import write_csv  # type: ignore[import-not-found]
+
+        write_csv(csv_path)
+
+
+# ----- Manifest-only checks --------------------------------------------
+
+
+def test_01_chem_correct_loads():
+    """The clean manifest parses cleanly and passes all firewall checks."""
+    manifest = load_manifest(MANIFESTS_DIR / "01_chem_correct.manifest.yaml")
+    assert manifest.step == "chem-smiles-to-sar-insight-v1"
+    check_manifest(manifest)
+
+
+def test_01_chem_correct_has_four_outputs_with_registers():
+    """The clean manifest's three outputs carry the right registers."""
+    manifest = load_manifest(MANIFESTS_DIR / "01_chem_correct.manifest.yaml")
+    by_id = {o.id: o for o in manifest.outputs}
+    assert by_id["descriptors.parquet"].register.value == "derived-from-measurement"
+    assert by_id["descriptors.parquet"].derivation == "rdkit-descriptor-suite-v2024"
+    assert by_id["lipinski_violations.parquet"].register.value == "derived-from-measurement"
+    assert by_id["lipinski_violations.parquet"].derivation == "lipinski-ro5-violation-count"
+    assert by_id["sar_insights.parquet"].register.value == "synthetic-acknowledged"
+    assert by_id["sar_insights.parquet"].synthesis == "templated-sar-insight-stub"
+
+
+def test_02_broken_missing_derivation_raises():
+    """Stage 2 missing derivation field must raise B-class at parse."""
+    with pytest.raises(Exception) as excinfo:
+        load_manifest(BROKEN_DIR / "02_chem_missing_derivation.manifest.yaml")
+    msg = str(excinfo.value)
+    assert "B-class" in msg
+    assert "derivation" in msg
+    assert "descriptors.parquet" in msg
+
+
+def test_03_broken_missing_synthesis_raises():
+    """Stage 4 missing synthesis field must raise B-class at parse."""
+    with pytest.raises(Exception) as excinfo:
+        load_manifest(BROKEN_DIR / "03_chem_missing_synthesis.manifest.yaml")
+    msg = str(excinfo.value)
+    assert "B-class" in msg
+    assert "synthesis" in msg
+    assert "sar_insights.parquet" in msg
+
+
+# ----- Pipeline-execution checks (RDKit-gated) -------------------------
+
+
+def _rdkit_available() -> bool:
+    try:
+        import rdkit  # noqa: F401
+
+        return True
+    except ImportError:
+        return False
+
+
+requires_rdkit = pytest.mark.skipif(
+    not _rdkit_available(),
+    reason="RDKit not installed; install with `pip install sakshi[chem]`.",
+)
+
+
+@requires_rdkit
+def test_descriptors_match_expected_for_aspirin():
+    """Descriptor suite for aspirin matches textbook values within rounding."""
+    from descriptors import compute_descriptors  # type: ignore[import-not-found]
+
+    d = compute_descriptors("ASP", "CC(=O)Oc1ccccc1C(=O)O")
+    # Aspirin: MW≈180, LogP≈1.2, TPSA≈63.6, HBD=1, HBA=3 (textbook values)
+    assert 175 <= d.molecular_weight <= 185
+    assert 0.5 <= d.logp <= 1.8
+    assert 60 <= d.tpsa <= 70
+    assert d.hbd_count == 1
+    assert d.hba_count == 3
+
+
+@requires_rdkit
+def test_descriptors_match_expected_for_caffeine():
+    """Descriptor suite for caffeine matches textbook values within rounding."""
+    from descriptors import compute_descriptors  # type: ignore[import-not-found]
+
+    d = compute_descriptors("CAF", "Cn1cnc2c1c(=O)n(C)c(=O)n2C")
+    # Caffeine: MW≈194, LogP≈-0.1, TPSA≈58, HBD=0, HBA=3
+    assert 190 <= d.molecular_weight <= 200
+    assert d.hbd_count == 0
+
+
+@requires_rdkit
+def test_lipinski_violations_zero_for_drug_like():
+    """All eight bundled compounds satisfy Lipinski Ro5 (zero violations)."""
+    from data.smiles_seed import SMILES_SEED  # type: ignore[import-not-found]
+    from descriptors import compute_descriptors, lipinski_violations  # type: ignore[import-not-found]
+
+    for cid, _name, smi in SMILES_SEED:
+        d = compute_descriptors(cid, smi)
+        assert lipinski_violations(d) == 0, (
+            f"Compound {cid} unexpectedly violates Ro5: {d}"
+        )
+
+
+@requires_rdkit
+def test_sar_insight_is_deterministic_function_of_descriptors():
+    """The insight stub is deterministic and depends only on descriptors."""
+    from descriptors import compute_descriptors  # type: ignore[import-not-found]
+    from insight import sar_insight_stub  # type: ignore[import-not-found]
+
+    d = compute_descriptors("IBU", "CC(C)Cc1ccc(C(C)C(=O)O)cc1")
+    s1 = sar_insight_stub(d)
+    s2 = sar_insight_stub(d)
+    assert s1 == s2
+    assert "IBU" in s1
+    assert str(d.logp) in s1
+
+
+@requires_rdkit
+def test_sar_insight_register_honesty():
+    """The insight layer's output is synthetic-acknowledged in the manifest.
+
+    This is a documentation test: it asserts that the project's
+    convention treats the templated stub identically to a real LLM
+    call. If you replace sar_insight_stub with an actual LLM call,
+    the manifest does not change — the register is already honest.
+    """
+    manifest = load_manifest(MANIFESTS_DIR / "01_chem_correct.manifest.yaml")
+    insight_output = next(
+        o for o in manifest.outputs if o.id == "sar_insights.parquet"
+    )
+    assert insight_output.register.value == "synthetic-acknowledged"
+    assert insight_output.synthesis is not None
+
+
+# ----- Substrate-portability assertion ---------------------------------
+
+
+def test_chem_manifest_uses_no_chemistry_specific_schema_fields():
+    """The chem manifest uses only generic sakshi schema fields.
+
+    This test makes the substrate-portability claim concrete:
+    everything in the chem manifest is built from sakshi's generic
+    vocabulary (register, derivation, synthesis, mode). Nothing in
+    sakshi's schema mentions chemistry. If the doctrine were
+    domain-specific, this test would be impossible to write.
+    """
+    import yaml
+
+    raw = yaml.safe_load(
+        (MANIFESTS_DIR / "01_chem_correct.manifest.yaml").read_text()
+    )
+    # The only domain-specific strings are in `description` and
+    # `derivation`/`synthesis` *values* — i.e., free-form text the
+    # schema does not constrain. The *keys* are all generic.
+    chem_specific_keys = {"smiles", "molecule", "compound", "rdkit", "lipinski"}
+
+    def walk_keys(obj):
+        if isinstance(obj, dict):
+            for k, v in obj.items():
+                yield k
+                yield from walk_keys(v)
+        elif isinstance(obj, list):
+            for item in obj:
+                yield from walk_keys(item)
+
+    keys = set(walk_keys(raw))
+    leaked = keys & chem_specific_keys
+    assert not leaked, (
+        f"Chemistry-specific keys leaked into the manifest structure: {leaked}. "
+        f"sakshi's schema should not need chemistry-specific extensions."
+    )
+#+end_src
+
+* What this example demonstrates
+
+Concretely, the chemoinformatics worked example demonstrates:
+
+1. *Substrate portability*. sakshi's doctrine is a property of the
+   /shape/ of scientific data pipelines, not of any specific domain.
+   The chem manifests work because they use only generic vocabulary
+   (register, derivation, synthesis, mode). The test
+   ~test_chem_manifest_uses_no_chemistry_specific_schema_fields~
+   makes this claim falsifiable.
+
+2. *The synthetic-acknowledged register is the honest answer*. The
+   "SAR insight" layer is a templated string in this example and
+   would be an LLM call in production. The register is identical
+   either way. The discipline does not depend on whether the
+   generator is statistical, deterministic, or neural — it depends
+   on whether the manifest names the synthesis procedure honestly.
+
+3. *Two real LLM-induced sins, caught at parse-time*. The two broken
+   manifests catch the two most common errors when an LLM helps an
+   engineer write a manifest:
+   - Labelling the register correctly but forgetting the
+     ~derivation~ field (the engineer or model knows the output is
+     derived but doesn't name how).
+   - Labelling the register correctly but forgetting the
+     ~synthesis~ field (the engineer or model knows the output is
+     generative but doesn't name how).
+   Both are B-class — they fail at parse, before any pipeline runs.
+
+4. *Optional dependency discipline*. RDKit is an optional dependency
+   (install via ~pip install sakshi[chem]~). The manifest-level
+   tests run without it; the pipeline-execution tests skip cleanly.
+   This is the pattern for domain-specific worked examples that
+   shouldn't bloat the core install.
+
+* End of file

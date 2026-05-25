@@ -38,6 +38,9 @@ test = [
 dev = [
     "ruff>=0.3",
 ]
+chem = [
+    "rdkit>=2023.9",
+]
 
 [project.entry-points.pytest11]
 sakshi = "sakshi.pytest_plugin"

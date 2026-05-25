@@ -81,6 +81,7 @@ The plugin does not maintain a compliance report. It **fails fast and informs**.
 - `codev/firewall.org` — the pytest plugin, literate, with each hook annotated for forward-compatibility with `dmt-eval`'s eventual test-plugin contract.
 - `codev/examples/synthetic.org` — a random-walk dataset with four injected faults, one per B/T/M class plus one false-positive trap. The pedagogical spine.
 - `codev/examples/imis.org` — a cached two-station snapshot from the SLF IMIS network (Weissfluhjoch and Davos Flueela), gap-filling and QC-flag handling, with manifest. The credibility anchor.
+- `codev/examples/chem.org` — a small-molecule chemoinformatics pipeline (SMILES → RDKit descriptors → Lipinski Ro5 → templated SAR insight), with one clean manifest and two pedagogical broken manifests. The substrate-portability anchor: the same doctrine, on a completely different domain, with nothing in the schema mentioning chemistry. Requires the optional `[chem]` extra (`pip install sakshi[chem]`) to run RDKit-dependent tests; manifest-level tests run without it.
 - `codev/dogfood.org` — `sakshi` validates its own build pipeline. The artefact that distributes the discipline cannot itself ignore the discipline.
 - `codev/extension.org` — how to add a check for a new register class, a new mode, or a domain-specific invariant.
 - `codev/roadmap-v0.2.org` — the named fold-in: when `dmt-eval`'s test-plugin contract stabilises (currently moving under [WP-0069 Brain-Score architectural comparison](https://github.com/mayalucia/dmt-eval)), `sakshi`'s firewall becomes a `dmt-eval` test-plugin domain; when `aikosh`'s schema-kind interface stabilises, `sakshi`'s manifest becomes an `aikosh` schema kind.
@@ -104,7 +105,7 @@ This is intentional cross-spirit coordination, not a private plan: the README st
 ## What this is not
 
 - It is not a compliance framework. There is no audit-trail dashboard, no report-generator, no certification. The discipline is in the *failure*, not in the bureaucracy of recording.
-- It is not Alpine-specific or sensor-network-specific. The IMIS example is one of two substrates. The doctrine is substrate-neutral.
+- It is not Alpine-specific or sensor-network-specific. The IMIS example is one of three substrates (alongside the synthetic pedagogical example and the chemoinformatics small-molecule pipeline). The doctrine is substrate-neutral, and the chem example exists specifically to make that claim falsifiable.
 - It is not a replacement for code review. It is a tool that lets reviewers focus on what only humans can review (was this the right transformation?) by automating what can be checked structurally (was the register of this column preserved or declared changed?).
 - It is not anti-LLM. It assumes LLM-assisted development is the new baseline and asks: what discipline does that baseline need to remain trustworthy?
 
@@ -112,7 +113,7 @@ This is intentional cross-spirit coordination, not a private plan: the README st
 
 ## Status
 
-Pre-alpha. v0.1 ships the doctrine, the schema, the firewall, and two worked examples. v0.2 will fold into `dmt-eval` and `aikosh` when those modules' contracts stabilise.
+Pre-alpha. v0.1 ships the doctrine, the schema, the firewall, and three worked examples (synthetic pedagogical, IMIS environmental-data credibility anchor, chemoinformatics substrate-portability anchor). v0.2 will fold into `dmt-eval` and `aikosh` when those modules' contracts stabilise.
 
 ## License
 

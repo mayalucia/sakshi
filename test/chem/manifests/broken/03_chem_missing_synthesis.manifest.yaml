@@ -1,0 +1,23 @@
+step: chem-broken-missing-synthesis
+mode: reconstruction-and-simulation
+description: |
+  BROKEN BY CONSTRUCTION. Stage 4 output claims register
+  'synthetic-acknowledged' but omits the 'synthesis' field. The
+  firewall should raise a B-class failure at parse-time.
+
+inputs:
+  - id: ../../data/smiles_seed.csv
+    register: measurement
+
+outputs:
+  - id: sar_insights.parquet
+    register: synthetic-acknowledged
+    # synthesis field deliberately omitted — firewall must catch.
+    description: |
+      Should fail B-class: synthesis field missing.
+
+tests:
+  - test_id: test/test_chem.py::test_03_broken_missing_synthesis_raises
+    description: |
+      Asserts that loading this manifest raises FirewallFailure with
+      class B and a message naming the missing synthesis field.

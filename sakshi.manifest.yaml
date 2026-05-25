@@ -42,6 +42,15 @@ inputs:
       The IMIS worked example, literate. Source-of-truth for
       test/test_imis.py, test/imis/, and data/imis-cached/README.md.
 
+  - id: codev/examples/chem.org
+    register: measurement
+    description: |
+      The chemoinformatics worked example, literate. Demonstrates
+      sakshi's substrate-portability — the doctrine applied to a
+      small-molecule descriptor pipeline (SMILES → RDKit descriptors
+      → Lipinski Ro5 → templated SAR insight). Source-of-truth for
+      test/test_chem.py and test/chem/.
+
   - id: codev/dogfood.org
     register: measurement
     description: |
@@ -86,6 +95,22 @@ outputs:
   - id: test/test_imis.py
     register: derived-from-measurement
     derivation: org-babel-tangle-from-codev-examples-imis-org
+
+  - id: test/test_chem.py
+    register: derived-from-measurement
+    derivation: org-babel-tangle-from-codev-examples-chem-org
+
+  - id: test/chem/descriptors.py
+    register: derived-from-measurement
+    derivation: org-babel-tangle-from-codev-examples-chem-org
+
+  - id: test/chem/insight.py
+    register: derived-from-measurement
+    derivation: org-babel-tangle-from-codev-examples-chem-org
+
+  - id: test/chem/data/smiles_seed.py
+    register: derived-from-measurement
+    derivation: org-babel-tangle-from-codev-examples-chem-org
 
   - id: test/test_dogfood.py
     register: derived-from-measurement
