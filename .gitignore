@@ -29,3 +29,13 @@ test/synthetic/data/
 # (The README at test/data/imis-cached/README.md documents the format)
 data/imis-cached/*.csv
 data/imis-cached/*.parquet
+/.agent-shell/
+
+# CLAUDE.md — rendered artefact, deployed from .guardian/CLAUDE.md
+# Anchored to root — .guardian/CLAUDE.md must be committed
+/CLAUDE.md
+!.guardian/CLAUDE.md
+
+# Relay clone and camp dwellings
+.sutra/
+.camps/
