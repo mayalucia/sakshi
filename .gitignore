@@ -39,3 +39,7 @@ data/imis-cached/*.parquet
 # Relay clone and camp dwellings
 .sutra/
 .camps/
+.observe/
+
+# park deposits (rite: aburaya/rites/park.md)
+.park/
