@@ -146,10 +146,13 @@ On session start, orient before acting:
    HEAD, or conflicts.
 2. **Sync** — only if the working tree is clean. If dirty, tell
    the human what you found and ask how to proceed.
-3. **Check the sūtra** — relay repo at `.sutra/` (gitignored).
-   Clone if absent, then `git fetch origin` and read
-   `git log HEAD..origin/main` for new messages relevant to
-   epistem, register-discipline, or modules/sakshi. Fast-forward after.
+3. **Check the sūtra** — read the relay with your own cursor:
+   `<project-root>/aburaya/scripts/relay.sh unread sakshi`, then the
+   `read` line it prints. The clone is the project root's `.sutra/`,
+   shared by every spirit, so its HEAD is nobody's cursor; never
+   clone `.sutra/` here (WP-0161 S5).
+   Look first for messages relevant to epistem, register-discipline, or
+   modules/sakshi.
 
 
 **Consume the park deposit.** If `park.org` at your repo root holds an
@@ -170,8 +173,9 @@ Single branch (`main`), append-only.
 - **Relay** (`relay/`): one file per message,
   `YYYY-MM-DD-HHMMSS-<machine>-<slug>.md`. YAML frontmatter:
   `from`, `date`, `tags`. No `to:`, no `status:`.
-- **Orientation**: `git log HEAD..origin/main` — the diff is your
-  unread messages. Local HEAD is your read cursor.
+- **Orientation**: `aburaya/scripts/relay.sh unread sakshi` — your
+  unread messages, by your own cursor (`refs/read/<name>` in the clone,
+  never pushed). Mark them read with `relay.sh read`.
 
 ## When to send messages
 
